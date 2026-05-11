@@ -134,3 +134,4 @@ add_test(NAME unittest COMMAND $<TARGET_FILE:catch2-unittests>)
 set_tests_properties(unittest PROPERTIES LABELS "check;unittest")
 
 add_subdirectory(my_fff_test)
+add_subdirectory(my_wrap_test)
