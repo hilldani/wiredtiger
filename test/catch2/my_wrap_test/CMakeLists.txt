@@ -18,7 +18,7 @@ create_test_executable(catch2-wrap-test
 # (same archive member as wiredtiger_unpack_start), which is impossible with
 # plain archive-resolution ordering.
 if(NOT WT_DARWIN)
-    target_link_options(catch2-wrap-test PRIVATE -Wl,--wrap=wiredtiger_pack_start)
+    #target_link_options(catch2-wrap-test PRIVATE -Wl,--wrap=wiredtiger_pack_start)
     target_compile_definitions(catch2-wrap-test PRIVATE HAVE_LINKER_WRAP)
 endif()
 

@@ -38,7 +38,7 @@ extern "C" {
  * replaced every call to wiredtiger_pack_start (including the one inside
  * wiredtiger_unpack_start) with a call to this symbol.
  */
-FAKE_VALUE_FUNC(int, __wrap_wiredtiger_pack_start,
+FAKE_VALUE_FUNC(int, wiredtiger_pack_start,
   WT_SESSION *, const char *, void *, size_t, WT_PACK_STREAM **);
 }
 
@@ -46,7 +46,7 @@ TEST_CASE(
   "wiredtiger_unpack_start calls wiredtiger_pack_start (same-TU intercept via --wrap)",
   "[wrap_test]")
 {
-    __wrap_wiredtiger_pack_start_fake.return_val = 0;
+    wiredtiger_pack_start_fake.return_val = 0;
 
     uint8_t buf[16] = {};
     WT_PACK_STREAM *ps = nullptr;
@@ -54,7 +54,7 @@ TEST_CASE(
     int ret = wiredtiger_unpack_start(nullptr, "Q", buf, sizeof(buf), &ps);
 
     REQUIRE(ret == 0);
-    REQUIRE(__wrap_wiredtiger_pack_start_fake.call_count == 1);
+    REQUIRE(wiredtiger_pack_start_fake.call_count == 1);
 }
 
 #endif /* HAVE_LINKER_WRAP */
