@@ -129,6 +129,18 @@ if(HAVE_UNITTEST)
     )
 
     FetchContent_MakeAvailable(Catch2)
+
+    FetchContent_Declare(
+        fff
+        GIT_REPOSITORY https://github.com/meekrosoft/fff.git
+        GIT_TAG        v1.1
+        GIT_SHALLOW    TRUE
+    )
+    FetchContent_MakeAvailable(fff)
+
+    add_library(fff_iface INTERFACE)
+    add_library(fff::fff ALIAS fff_iface)
+    target_include_directories(fff_iface INTERFACE ${fff_SOURCE_DIR})
 endif()
 
 # Enable CTest. Subsequent targets may additionally define their own ctest definitions.

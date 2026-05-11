@@ -115,6 +115,7 @@ create_test_executable(catch2-unittests
         ${COMPILER_DIAGNOSTIC_CXX_FLAGS}
     LIBS
         Catch2::Catch2
+        fff::fff
     CXX
 )
 
@@ -131,3 +132,5 @@ endif()
 
 add_test(NAME unittest COMMAND $<TARGET_FILE:catch2-unittests>)
 set_tests_properties(unittest PROPERTIES LABELS "check;unittest")
+
+add_subdirectory(my_fff_test)
