@@ -131,3 +131,7 @@ endif()
 
 add_test(NAME unittest COMMAND $<TARGET_FILE:catch2-unittests>)
 set_tests_properties(unittest PROPERTIES LABELS "check;unittest")
+
+if(HAVE_UNITTEST)
+    add_subdirectory(regression)
+endif()

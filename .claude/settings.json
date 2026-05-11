@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(xargs ls -l)",
+      "Bash(lldb -o \"run\" -o \"bt\" -o \"quit\" -- ./test/catch2/regression/catch2-regression-wt_17297)",
+      "Bash(lldb -o \"run\" -o \"bt\" -o \"quit\" -- ./test/catch2/regression/catch2-regression-wt_17387_seen_committed)",
+      "Bash(git -C /Users/salman/Documents/wiredtiger show 6c508ac501 -- test/suite/test_layered101.py)"
+    ]
+  }
+}

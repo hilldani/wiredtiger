@@ -3738,3 +3738,11 @@ err:
 
     return (ret);
 }
+
+#ifdef HAVE_UNITTEST
+int
+__ut_conn_chunk_cache_check(WT_SESSION_IMPL *session, const char *config)
+{
+    return (__conn_chunk_cache_check(session, config, NULL));
+}
+#endif

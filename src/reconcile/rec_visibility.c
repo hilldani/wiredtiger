@@ -1750,3 +1750,26 @@ __wti_rec_upd_select(WT_SESSION_IMPL *session, WTI_RECONCILE *r, WT_INSERT *ins,
 
     return (0);
 }
+
+#ifdef HAVE_UNITTEST
+int
+__ut_rec_append_orig_value(WT_SESSION_IMPL *session, WT_PAGE *page, WT_UPDATE *upd,
+  WT_CELL_UNPACK_KV *unpack, bool write_prepared)
+{
+    return (__rec_append_orig_value(session, page, upd, unpack, write_prepared));
+}
+
+int
+__ut_rec_validate_upd_chain(WT_SESSION_IMPL *session, WTI_RECONCILE *r, WT_UPDATE *select_upd,
+  WT_TIME_WINDOW *select_tw, WT_CELL_UNPACK_KV *vpack)
+{
+    return (__rec_validate_upd_chain(session, r, select_upd, select_tw, vpack));
+}
+
+int
+__ut_rec_fill_tw_from_upd_select(WT_SESSION_IMPL *session, WT_PAGE *page,
+  WT_CELL_UNPACK_KV *vpack, WTI_UPDATE_SELECT *upd_select, bool write_prepare, WTI_RECONCILE *r)
+{
+    return (__rec_fill_tw_from_upd_select(session, page, vpack, upd_select, write_prepare, r));
+}
+#endif

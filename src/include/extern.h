@@ -2641,6 +2641,19 @@ extern void __ut_block_off_srch_pair(
 extern void __ut_block_size_srch(WT_SIZE **head, wt_off_t size, WT_SIZE ***stack);
 extern void __ut_disagg_get_crypt_header(WT_ITEM *key_item, WT_CRYPT_HEADER **header);
 extern void __ut_disagg_set_crypt_header(WT_SESSION_IMPL *session, WT_CRYPT_KEYS *crypt);
+extern int __ut_btree_pin_hs_dhandle(WT_SESSION_IMPL *session, WT_BTREE *btree)
+  WT_GCC_FUNC_DECL_ATTRIBUTE((warn_unused_result));
+extern int __ut_conn_chunk_cache_check(WT_SESSION_IMPL *session, const char *config)
+  WT_GCC_FUNC_DECL_ATTRIBUTE((warn_unused_result));
+extern int __ut_rec_append_orig_value(WT_SESSION_IMPL *session, WT_PAGE *page, WT_UPDATE *upd,
+  WT_CELL_UNPACK_KV *unpack, bool write_prepared)
+  WT_GCC_FUNC_DECL_ATTRIBUTE((warn_unused_result));
+extern int __ut_rec_validate_upd_chain(WT_SESSION_IMPL *session, WTI_RECONCILE *r,
+  WT_UPDATE *select_upd, WT_TIME_WINDOW *select_tw, WT_CELL_UNPACK_KV *vpack)
+  WT_GCC_FUNC_DECL_ATTRIBUTE((warn_unused_result));
+extern int __ut_rec_fill_tw_from_upd_select(WT_SESSION_IMPL *session, WT_PAGE *page,
+  WT_CELL_UNPACK_KV *vpack, WTI_UPDATE_SELECT *upd_select, bool write_prepare, WTI_RECONCILE *r)
+  WT_GCC_FUNC_DECL_ATTRIBUTE((warn_unused_result));
 
 #endif
 

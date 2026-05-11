@@ -1322,3 +1322,11 @@ __wt_btree_switch_object(WT_SESSION_IMPL *session, uint32_t objectid)
     bm = btree->bm;
     return (bm == NULL ? 0 : bm->switch_object(bm, session, objectid));
 }
+
+#ifdef HAVE_UNITTEST
+int
+__ut_btree_pin_hs_dhandle(WT_SESSION_IMPL *session, WT_BTREE *btree)
+{
+    return (__btree_pin_hs_dhandle(session, btree));
+}
+#endif
