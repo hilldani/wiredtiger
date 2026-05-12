@@ -1161,18 +1161,17 @@ struct __wt_ref {
     wt_shared volatile uint32_t pindex_hint; /* Reference page index hint */
 
 /*
- * A flag used to track a ref has changed during internal page reconciliation. The value is compared
- * and swapped to WT_REF_REC_CLEAN for each internal page reconciliation. If the flag becomes
- * WT_REF_REC_DIRTY, this implies that the ref has been changed concurrently and that the ref
- * remains dirty after internal page reconciliation. It is possible for other operations such as
- * page splits and fast-truncate to concurrently mark WT_REF_REC_DIRTY to the ref, but depending on
- * timing or race conditions, it cannot be guaranteed that the new change is included as part of the
- * reconciliation. The page would need to be reconciled again to ensure that these modifications are
- * included.
+ * A flag used to track whether a ref has been dirtied while reconciling an internal page. The value
+ * is compared and swapped to WT_REF_CLEAN for each internal page reconciliation. If the flag
+ * becomes WT_REF_DIRTY, this implies that the ref has been changed concurrently and remains dirty
+ * after internal page reconciliation. Other operations, such as page splits and fast-truncate, can
+ * also concurrently mark the ref WT_REF_DIRTY, but depending on timing or race conditions, it
+ * cannot be guaranteed that the new change is included as part of the reconciliation. The page
+ * would need to be reconciled again to ensure that these modifications are included.
  */
-#define WT_REF_REC_CLEAN 0
-#define WT_REF_REC_DIRTY 1
-    wt_shared volatile uint8_t rec_state;
+#define WT_REF_CLEAN 0
+#define WT_REF_DIRTY 1
+    wt_shared volatile uint8_t dirty_state;
 
 /*
  * Define both internal- and leaf-page flags for now: we only need one, but it provides an easy way
@@ -1550,19 +1549,20 @@ struct __wt_update {
 
 /* When introducing a new flag, consider adding it to WT_UPDATE_SELECT_FOR_DS. */
 /* AUTOMATIC FLAG VALUE GENERATION START 0 */
-#define WT_UPDATE_DELETE_DURABLE 0x001u  /* Key has been removed from disk image. */
-#define WT_UPDATE_DS 0x002u              /* Update has been chosen to the data store. */
-#define WT_UPDATE_DURABLE 0x004u         /* Update has been durable. */
-#define WT_UPDATE_HS 0x008u              /* Update has been written to hs. */
-#define WT_UPDATE_HS_MAX_STOP 0x010u     /* Update has been written to hs with a max stop. */
-#define WT_UPDATE_PREPARE_DURABLE 0x020u /* Prepared update has been durable. */
-#define WT_UPDATE_PREPARE_RESTORED_FROM_DS 0x040u /* Prepared update restored from data store. */
-#define WT_UPDATE_PREPARE_ROLLBACK 0x080u /* Tombstone that rolled back by a prepared update.*/
-#define WT_UPDATE_RESTORED_FAST_TRUNCATE 0x100u /* Fast truncate instantiation. */
-#define WT_UPDATE_RESTORED_FROM_DS 0x200u       /* Update restored from data store. */
-#define WT_UPDATE_RESTORED_FROM_HS 0x400u       /* Update restored from history store. */
-#define WT_UPDATE_RTS_DRYRUN_ABORT 0x800u       /* Used by dry run to mark a would-be abort. */
-                                                /* AUTOMATIC FLAG VALUE GENERATION STOP 16 */
+#define WT_UPDATE_DELETE_DURABLE 0x0001u  /* Key has been removed from disk image. */
+#define WT_UPDATE_DS 0x0002u              /* Update has been chosen to the data store. */
+#define WT_UPDATE_DURABLE 0x0004u         /* Update has been durable. */
+#define WT_UPDATE_HS 0x0008u              /* Update has been written to hs. */
+#define WT_UPDATE_HS_MAX_STOP 0x0010u     /* Update has been written to hs with a max stop. */
+#define WT_UPDATE_PREPARE_DURABLE 0x0020u /* Prepared update has been durable. */
+#define WT_UPDATE_PREPARE_RESTORED_FROM_DS 0x0040u /* Prepared update restored from data store. */
+#define WT_UPDATE_PREPARE_ROLLBACK 0x0080u /* Tombstone that rolled back by a prepared update.*/
+#define WT_UPDATE_RESTORED_FAST_TRUNCATE 0x0100u /* Fast truncate instantiation. */
+#define WT_UPDATE_RESTORED_FROM_DS 0x0200u       /* Update restored from data store. */
+#define WT_UPDATE_RESTORED_FROM_HS 0x0400u       /* Update restored from history store. */
+#define WT_UPDATE_RESTORED_FROM_INGEST 0x0800u   /* Update restored from ingest btree. */
+#define WT_UPDATE_RTS_DRYRUN_ABORT 0x1000u       /* Used by dry run to mark a would-be abort. */
+                                                 /* AUTOMATIC FLAG VALUE GENERATION STOP 16 */
     uint16_t flags;
 
 /* There are several cases we should select the update irrespective of visibility to write to the

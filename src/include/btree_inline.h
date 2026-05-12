@@ -23,7 +23,7 @@ __wt_btree_disable_bulk(WT_SESSION_IMPL *session)
      * Once a tree is no longer empty, eviction should pay attention to it, and it's no longer
      * possible to bulk-load into it.
      */
-    if (!btree->original)
+    if (!__wt_atomic_load_uint8_acquire(&btree->original))
         return;
 
     /*
@@ -153,10 +153,18 @@ __wt_btree_block_free(WT_SESSION_IMPL *session, const uint8_t *addr, size_t addr
     WT_BM *bm;
     WT_BTREE *btree;
 
+    /*
+     * During salvage, reconciliation frees overflow blocks that need special tracking to avoid
+     * double frees. Intercept here rather than overriding the block manager's function pointer as
+     * the previous implementation did.
+     */
+    if (session->salvage_track != NULL)
+        return (__wt_slvg_reconcile_free(session, addr, addr_size));
+
     btree = S2BT(session);
     bm = btree->bm;
 
-    return (bm->free(bm, session, addr, addr_size));
+    return (bm->free(bm, session, addr, addr_size, false));
 }
 
 /*
@@ -284,40 +292,13 @@ __wt_btree_shared(WT_SESSION_IMPL *session, const char *uri, const char **bt_cfg
     *shared = false;
 
     WT_RET(__wt_config_gets(session, bt_cfg, "block_manager", &cval));
-    *shared = (WT_SUFFIX_MATCH(uri, ".wt_stable") || WT_CONFIG_LIT_MATCH("disagg", cval));
+    *shared = (WT_URI_IS_STABLE(uri) || WT_CONFIG_LIT_MATCH("disagg", cval));
+
+    /* Ingest btrees must never be shared. */
+    WT_ASSERT_ALWAYS(
+      session, !(*shared && WT_URI_IS_INGEST(uri)), "Ingest btree incorrectly created as shared.");
 
     return (0);
-}
-
-/*
- * __wt_btree_set_size --
- *     Set the size of the tree.
- */
-static WT_INLINE void
-__wt_btree_set_size(WT_SESSION_IMPL *session, uint64_t size)
-{
-    (void)__wt_atomic_store_uint64(&S2BT(session)->bytes_total, size);
-}
-
-/*
- * __wt_btree_increase_size --
- *     Increase the size of the tree.
- */
-static WT_INLINE void
-__wt_btree_increase_size(WT_SESSION_IMPL *session, uint64_t size)
-{
-    (void)__wt_atomic_add_uint64(&S2BT(session)->bytes_total, size);
-}
-
-/*
- * __wt_btree_decrease_size --
- *     Decrease the size of the tree.
- */
-static WT_INLINE void
-__wt_btree_decrease_size(WT_SESSION_IMPL *session, uint64_t size)
-{
-    WT_ASSERT(session, __wt_atomic_load_uint64(&S2BT(session)->bytes_total) >= size);
-    (void)__wt_atomic_sub_uint64(&S2BT(session)->bytes_total, size);
 }
 
 /*
@@ -1825,7 +1806,6 @@ __wt_ref_addr_copy(WT_SESSION_IMPL *session, WT_REF *ref, WT_ADDR_COPY *copy)
     WT_PAGE *page;
 
     unpack = &_unpack;
-    page = ref->home;
     copy->del_set = false;
 
     WT_ASSERT_ALWAYS(session, __wt_session_gen(session, WT_GEN_SPLIT) != 0,
@@ -1835,16 +1815,16 @@ __wt_ref_addr_copy(WT_SESSION_IMPL *session, WT_REF *ref, WT_ADDR_COPY *copy)
      * To look at an on-page cell, we need to look at the parent page's disk image, and that can be
      * dangerous. The problem is if the parent page splits, deepening the tree. As part of that
      * process, the WT_REF WT_ADDRs pointing into the parent's disk image are copied into off-page
-     * WT_ADDRs and swapped into place. The content of the two WT_ADDRs are identical, and we don't
-     * care which version we get as long as we don't mix-and-match the two.
+     * WT_ADDRs and swapped into place before ref->home is updated to the new child page. Read
+     * ref->home before ref->addr with an acquire barrier in between, pairing with the sequentially
+     * consistent CAS on ref->addr during split. This ensures that if we observe a new child page as
+     * home, we also observe the corresponding off-page addr. The dangerous combination is reading a
+     * new home with an old addr, as the on-page cell would be misinterpreted as an off-page
+     * address.
      */
-    addr = (WT_ADDR *)ref->addr; /* The cookie address of the page on disk(including the file, 
-    offset, etc...), while page->dsk is the address of the disk image of the page in the memory
-    The system get the page image by ref->addr and save this original image to a separate memory as 
-    page->dsk; */
+    page = (WT_PAGE *)__wt_atomic_load_ptr_relaxed(&ref->home);
 
-    WT_ACQUIRE_BARRIER();
-
+    addr = (WT_ADDR *)__wt_atomic_load_ptr_acquire(&ref->addr);
     /* If NULL, there is no information. */
     if (addr == NULL)
         return (false);
@@ -2039,11 +2019,11 @@ __wt_page_del_committed_set(WT_PAGE_DELETED *page_del)
 }
 
 /*
- * __wt_btree_syncing_by_other_session --
- *     Returns true if the session's current btree is being synced by another thread.
+ * __wt_btree_syncing_by_other_sessions --
+ *     Returns true if the session's current btree is being synced, but not by the current session.
  */
 static WT_INLINE bool
-__wt_btree_syncing_by_other_session(WT_SESSION_IMPL *session)
+__wt_btree_syncing_by_other_sessions(WT_SESSION_IMPL *session)
 {
     WT_BTREE *btree;
 
@@ -2338,7 +2318,7 @@ __wt_page_can_evict(WT_SESSION_IMPL *session, WT_REF *ref, bool *inmem_splitp)
      * historical tables, reconciliation no longer writes overflow cookies on internal pages, no
      * matter the size of the key.)
      */
-    if (__wt_btree_syncing_by_other_session(session) &&
+    if (__wt_btree_syncing_by_other_sessions(session) &&
       F_ISSET_ATOMIC_16(ref->home, WT_PAGE_INTL_OVERFLOW_KEYS)) {
         WT_STAT_CONN_DSRC_INCR(session, cache_eviction_blocked_overflow_keys);
         return (false);
@@ -2372,7 +2352,7 @@ __wt_page_can_evict(WT_SESSION_IMPL *session, WT_REF *ref, bool *inmem_splitp)
      * written and the previous version freed, that previous version might be referenced by an
      * internal page already written in the checkpoint, leaving the checkpoint inconsistent.
      */
-    if (modified && __wt_btree_syncing_by_other_session(session)) {
+    if (modified && __wt_btree_syncing_by_other_sessions(session)) {
         WT_STAT_CONN_DSRC_INCR(session, cache_eviction_blocked_checkpoint);
         return (false);
     }

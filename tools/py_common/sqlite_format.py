@@ -4,6 +4,27 @@
 # Public Domain 2008-2014 WiredTiger, Inc.
 #
 # This is free and unencumbered software released into the public domain.
+#
+# Anyone is free to copy, modify, publish, use, compile, sell, or
+# distribute this software, either in source code form or as a compiled
+# binary, for any purpose, commercial or non-commercial, and by any
+# means.
+#
+# In jurisdictions that recognize copyright laws, the author or authors
+# of this software dedicate any and all copyright interest in the
+# software to the public domain. We make this dedication for the benefit
+# of the public at large and to the detriment of our heirs and
+# successors. We intend this dedication to be an overt act of
+# relinquishment in perpetuity of all present and future rights to this
+# software under copyright law.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+# EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+# MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+# IN NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY CLAIM, DAMAGES OR
+# OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+# ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+# OTHER DEALINGS IN THE SOFTWARE.
 
 import logging
 import sqlite3
@@ -12,6 +33,7 @@ import sys
 from typing import Iterable, List, Optional
 
 from py_common import disagg
+from py_common.decode_opts import DecodeOptions
 
 
 SQLITE3_SIGNATURE = b'SQLite format 3\x00'
@@ -175,24 +197,24 @@ def _load_disagg_pages_for_page_id(
     return [_rows_to_disagg_pages(rows)]
 
 
-def load_disagg_pages(filename: str, opts) -> List[List[disagg.DisaggPage]]:
+def load_disagg_pages(filename: str, *, lsn=None, page_id=None, pages: int = 0) -> List[List[disagg.DisaggPage]]:
     with sqlite3.connect(filename) as conn:
         conn.row_factory = sqlite3.Row
 
         # Specific lsn takes precedence over page_id selection,
         # since it provides a more precise selection of the page to decode.
-        if opts.lsn is not None:
-            return _load_disagg_pages_for_lsn(conn, opts.lsn, opts.page_id)
+        if lsn is not None:
+            return _load_disagg_pages_for_lsn(conn, lsn, page_id)
 
         # Select entire page chain for given page_id.
-        if opts.page_id is not None:
-            return _load_disagg_pages_for_page_id(conn, opts.page_id)
+        if page_id is not None:
+            return _load_disagg_pages_for_page_id(conn, page_id)
 
         # No specific selection criteria provided; return all pages up to the limit.
-        pages_limit = opts.pages if opts.pages > 0 else sys.maxsize
+        pages_limit = pages if pages > 0 else sys.maxsize
         return _load_disagg_pages_all(conn, pages_limit)
 
 
-def process_sqlite_file(filename: str, opts) -> disagg.DisaggTableSummary:
-    disagg_pages = load_disagg_pages(filename, opts)
+def process_sqlite_file(filename: str, opts: DecodeOptions) -> disagg.DisaggTableSummary:
+    disagg_pages = load_disagg_pages(filename, lsn=opts.lsn, page_id=opts.page_id, pages=opts.pages)
     return disagg.process_disagg_pages(disagg_pages, opts)

@@ -200,9 +200,9 @@ __wti_block_disagg_write_internal(WT_SESSION_IMPL *session, WT_BLOCK_DISAGG *blo
     __wt_stat_usecs_hist_incr_disaggbmwrite(session, WT_CLOCKDIFF_US(time_stop, time_start));
 
     __wt_verbose(session, WT_VERB_WRITE,
-      "page_id %" PRIu64 ", size %" WT_SIZET_FMT ", checksum %" PRIx32 ", lsn %" PRIu64
-      ", page_image_size %" WT_SIZET_FMT,
-      page_id, buf->size, checksum, put_args.lsn, page_image_size);
+      "page_id %" PRIu64 ", table_id %" PRIu64 ", size %" WT_SIZET_FMT ", checksum %" PRIx32
+      ", lsn %" PRIu64 ", page_image_size %" WT_SIZET_FMT,
+      page_id, block_disagg->tableid, buf->size, checksum, put_args.lsn, page_image_size);
 
     /* Some extra data is set by the put interface, and must be returned up the chain. */
     block_meta->disagg_lsn = put_args.lsn;
@@ -211,9 +211,6 @@ __wti_block_disagg_write_internal(WT_SESSION_IMPL *session, WT_BLOCK_DISAGG *blo
 
     *sizep = WT_STORE_SIZE(buf->size);
     *checksump = checksum;
-
-    /* Update the btree's running total of bytes. */
-    __wt_btree_increase_size(session, *sizep);
 
     return (0);
 }
@@ -249,6 +246,9 @@ __wti_block_disagg_write(WT_SESSION_IMPL *session, WT_BLOCK *block, WT_ITEM *buf
     WT_RET(__wti_block_disagg_write_internal(session, block_disagg, buf, block_meta,
       page_image_size, &size, &checksum, data_checksum, checkpoint_io));
 
+    /* Update the running total of bytes. */
+    __wti_block_disagg_increase_size(block_disagg, size);
+
     __wt_page_header_byteswap(buf->mem);
 
     WT_CLEAR(cookie);
@@ -279,26 +279,37 @@ __wti_block_disagg_write(WT_SESSION_IMPL *session, WT_BLOCK *block, WT_ITEM *buf
  *     Discard a page.
  */
 int
-__wti_block_disagg_page_discard(
-  WT_SESSION_IMPL *session, WT_BLOCK_DISAGG *block_disagg, const uint8_t *addr, size_t addr_size)
+__wti_block_disagg_page_discard(WT_SESSION_IMPL *session, WT_BLOCK_DISAGG *block_disagg,
+  const uint8_t *addr, size_t addr_size, bool is_root)
 {
     /* Crack the cookie. */
     WT_BLOCK_DISAGG_ADDRESS_COOKIE cookie;
     WT_RET(__wt_block_disagg_addr_unpack(session, &addr, addr_size, &cookie));
 
     __wt_verbose(session, WT_VERB_BLOCK,
-      "block free: page_id %" PRIu64 ", flags %" PRIx64 ", lsn %" PRIu64 ", base_lsn %" PRIu64
-      ", size %" PRIu32 ", checksum %" PRIx32,
-      cookie.page_id, cookie.flags, cookie.lsn, cookie.base_lsn, cookie.size, cookie.checksum);
+      "block free: page_id %" PRIu64 ", table_id %" PRIu64 ", flags %" PRIx64 ", lsn %" PRIu64
+      ", base_lsn %" PRIu64 ", size %" PRIu32 ", checksum %" PRIx32,
+      cookie.page_id, block_disagg->tableid, cookie.flags, cookie.lsn, cookie.base_lsn, cookie.size,
+      cookie.checksum);
 
     /* Create the discard request. */
     WT_PAGE_LOG_HANDLE *plhandle = block_disagg->plhandle;
 
     /*
-     * Decrement the btree's running total of bytes. The cookie.size field represents the cumulative
-     * size of the block chain (base + deltas).
+     * Skip the size decrement for root pages for two reasons:
+     *
+     * First, the old root page discard occurs after the checkpoint size has already been written
+     * out to the metadata. This means the old root page's size is intentionally included in the
+     * checkpoint size at the point it is recorded. Decrementing here would produce a size smaller
+     * than what was written to metadata, causing verify to fail.
+     *
+     * Second, to account for the above, __bmd_checkpoint_pack_raw explicitly manages root page size
+     * transitions in block_disagg->size: it subtracts the previous root size and adds the current
+     * root size at the moment the checkpoint size is computed. Decrementing here as well would
+     * cause the old root page size to be subtracted twice.
      */
-    __wt_btree_decrease_size(session, cookie.size);
+    if (!is_root)
+        __wti_block_disagg_decrease_size(session, block_disagg, cookie.size);
 
     /* Ignore the call if the function is not implemented. */
     if (plhandle->plh_discard == NULL) {

@@ -129,6 +129,10 @@ testutil_deduce_build_dir(TEST_OPTS *opts)
     char *token;
     int index;
 
+    /* Nothing to deduce if the caller already specified the build directory (e.g. via -b). */
+    if (opts->build_dir != NULL)
+        return;
+
     if (getcwd(pwd, sizeof(pwd)) == NULL)
         testutil_die(ENOENT, "No such directory");
 
@@ -585,6 +589,40 @@ dstrndup(const char *str, size_t len)
     p = dcalloc(len + 1, sizeof(char));
     memcpy(p, str, len);
     return (p);
+}
+
+/*
+ * testutil_format_item --
+ *     Do printf-style formatting into a WT_ITEM buffer, growing as needed.
+ */
+void
+testutil_format_item(WT_ITEM *item, const char *fmt, ...)
+  WT_GCC_FUNC_ATTRIBUTE((format(printf, 2, 3)))
+{
+    size_t needed;
+    va_list ap, ap_copy;
+
+    va_start(ap, fmt);
+    va_copy(ap_copy, ap);
+
+    /* First call with a zero-size buffer to measure the required length. */
+    needed = 0;
+    testutil_check(__wt_vsnprintf_len_incr(NULL, 0, &needed, fmt, ap));
+    va_end(ap);
+
+    /* Grow the buffer if needed, accounting for the null terminator. */
+    if (needed + 1 > item->memsize) {
+        item->mem = drealloc(item->mem, needed + 1);
+        item->memsize = needed + 1;
+    }
+
+    /* Second call: write the string into the buffer. */
+    item->size = 0;
+    testutil_check(
+      __wt_vsnprintf_len_incr((char *)item->mem, item->memsize, &item->size, fmt, ap_copy));
+    va_end(ap_copy);
+
+    item->data = item->mem;
 }
 
 /*

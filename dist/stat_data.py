@@ -80,10 +80,6 @@ class CheckpointStat(Stat):
     prefix = 'checkpoint'
     def __init__(self, name, desc, flags=''):
         Stat.__init__(self, name, CheckpointStat.prefix, desc, flags)
-class ChunkCacheStat(Stat):
-    prefix = 'chunk-cache'
-    def __init__(self, name, desc, flags=''):
-        Stat.__init__(self, name, ChunkCacheStat.prefix, desc, flags)
 class CompressStat(Stat):
     prefix = 'compression'
     def __init__(self, name, desc, flags=''):
@@ -95,7 +91,7 @@ class ConnStat(Stat):
 class CursorErrorStat(Stat):
     prefix = 'cursor'
     def __init__(self, name, desc, flags=''):
-        Stat.__init__(self, name, CursorStat.prefix, desc, flags)
+        Stat.__init__(self, name, CursorErrorStat.prefix, desc, flags)
 class CursorStat(Stat):
     prefix = 'cursor'
     def __init__(self, name, desc, flags=''):
@@ -103,7 +99,7 @@ class CursorStat(Stat):
 class CursorSweepStat(Stat):
     prefix = 'cursor'
     def __init__(self, name, desc, flags=''):
-        Stat.__init__(self, name, CursorStat.prefix, desc, flags)
+        Stat.__init__(self, name, CursorSweepStat.prefix, desc, flags)
 class DhandleStat(Stat):
     prefix = 'data-handle'
     def __init__(self, name, desc, flags=''):
@@ -160,7 +156,7 @@ class SessionOpStat(Stat):
 class StorageStat(Stat):
     prefix = 'tiered-storage'
     def __init__(self, name, desc, flags=''):
-        Stat.__init__(self, name, SessionOpStat.prefix, desc, flags)
+        Stat.__init__(self, name, StorageStat.prefix, desc, flags)
 class ThreadStat(Stat):
     prefix = 'thread-state'
     def __init__(self, name, desc, flags=''):
@@ -337,6 +333,7 @@ conn_stats = [
     CacheStat('cache_pages_dirty_stable', 'tracked dirty pages in the cache from the stable btrees', 'no_clear,no_scale'),
     CacheStat('cache_pages_inuse', 'pages currently held in the cache', 'no_clear,no_scale'),
     CacheStat('cache_pages_inuse_ingest', 'pages currently held in the cache from the ingest btrees', 'no_clear,no_scale'),
+    CacheStat('cache_pages_inuse_leaf', 'leaf pages currently held in the cache', 'no_clear,no_scale'),
     CacheStat('cache_pages_inuse_stable', 'pages currently held in the cache from the stable btrees', 'no_clear,no_scale'),
     CacheStat('cache_read_app_count', 'application threads page read from disk to cache count'),
     CacheStat('cache_read_app_time', 'application threads page read from disk to cache time (usecs)'),
@@ -366,6 +363,7 @@ conn_stats = [
     EvictStat('eviction_fail_active_children_on_an_internal_page', 'pages selected for eviction unable to be evicted because of active children on an internal page'),
     EvictStat('eviction_fail_checkpoint_no_ts', 'pages selected for eviction unable to be evicted because of race between checkpoint and updates without timestamps'),
     EvictStat('eviction_fail_in_reconciliation', 'pages selected for eviction unable to be evicted because of failure in reconciliation'),
+    EvictStat('eviction_fail_ingest', 'pages selected for eviction unable to be evicted belonging to ingest btrees'),
     EvictStat('eviction_force', 'forced eviction - pages selected count'),
     EvictStat('eviction_force_clean', 'forced eviction - pages evicted that were clean count'),
     EvictStat('eviction_force_delete', 'forced eviction - pages selected because of too many deleted items count'),
@@ -374,10 +372,13 @@ conn_stats = [
     EvictStat('eviction_force_hs', 'forced eviction - history store pages selected while session has history store cursor open'),
     EvictStat('eviction_force_hs_fail', 'forced eviction - history store pages failed to evict while session has history store cursor open'),
     EvictStat('eviction_force_hs_success', 'forced eviction - history store pages successfully evicted while session has history store cursor open'),
+    EvictStat('eviction_force_ingest_fail', 'forced eviction - pages selected belonging to ingest btrees unable to be evicted count'),
+    EvictStat('eviction_force_ingest_success', 'forced eviction - pages evicted belonging to ingest btrees count'),
     EvictStat('eviction_force_long_update_list', 'forced eviction - pages selected because of a large number of updates to a single item'),
     EvictStat('eviction_force_no_retry', 'forced eviction - do not retry count to evict pages selected to evict during reconciliation'),
     EvictStat('eviction_get_ref_empty', 'eviction calls to get a page found queue empty'),
     EvictStat('eviction_get_ref_empty2', 'eviction calls to get a page found queue empty after locking'),
+    EvictStat('eviction_ingest_success', 'ingest pages evicted'),
     EvictStat('eviction_internal_pages_already_queued', 'internal pages seen by eviction walk that are already queued'),
     EvictStat('eviction_internal_pages_queued', 'internal pages queued for eviction'),
     EvictStat('eviction_internal_pages_seen', 'internal pages seen by eviction walk'),
@@ -410,7 +411,6 @@ conn_stats = [
     EvictStat('eviction_server_evict_attempt', 'evict page attempts by eviction server'),
     EvictStat('eviction_server_evict_fail', 'evict page failures by eviction server'),
     EvictStat('eviction_server_push_pages_failed_when_flaging', 'eviction server push pages to queue failed because of racing with setting flag'),
-    EvictStat('eviction_server_race_reconfigure_disagg', 'eviction server races with the reconfigure API call in disagg'),
     # Note eviction_server_evict_attempt - eviction_server_evict_fail = evict page successes by eviction server.
     EvictStat('eviction_server_skip_checkpointing_trees', 'eviction server skips trees that are being checkpointed'),
     EvictStat('eviction_server_skip_dirty_pages_during_checkpoint', 'eviction server skips dirty pages during a running checkpoint'),
@@ -470,14 +470,12 @@ conn_stats = [
     ##########################################
     # Capacity statistics
     ##########################################
-    CapacityStat('capacity_bytes_chunkcache', 'bytes written for chunk cache'),
     CapacityStat('capacity_bytes_ckpt', 'bytes written for checkpoint'),
     CapacityStat('capacity_bytes_evict', 'bytes written for eviction'),
     CapacityStat('capacity_bytes_log', 'bytes written for log'),
     CapacityStat('capacity_bytes_read', 'bytes read'),
     CapacityStat('capacity_bytes_written', 'bytes written total'),
     CapacityStat('capacity_threshold', 'threshold to call fsync'),
-    CapacityStat('capacity_time_chunkcache', 'time waiting for chunk cache IO bandwidth (usecs)'),
     CapacityStat('capacity_time_ckpt', 'time waiting during checkpoint (usecs)'),
     CapacityStat('capacity_time_evict', 'time waiting during eviction (usecs)'),
     CapacityStat('capacity_time_log', 'time waiting during logging (usecs)'),
@@ -513,17 +511,19 @@ conn_stats = [
     CheckpointStat('checkpoint_handle_skip_duration', 'most recent duration for gathering skipped handles (usecs)', 'no_clear,no_scale'),
     CheckpointStat('checkpoint_handle_skipped', 'most recent handles skipped'),
     CheckpointStat('checkpoint_handle_walked', 'most recent handles walked'),
-    CheckpointStat('checkpoint_hs_pages_reconciled', 'number of history store pages caused to be reconciled'),
-    CheckpointStat('checkpoint_pages_reconciled', 'number of pages caused to be reconciled'),
-    CheckpointStat('checkpoint_pages_reconciled_bytes', 'number of bytes caused to be reconciled'),
+    CheckpointStat('checkpoint_hs_pages_reconciled', 'number of history store pages reconciled'),
+    CheckpointStat('checkpoint_pages_reconciled', 'number of pages reconciled'),
+    CheckpointStat('checkpoint_pages_reconciled_bytes', 'number of bytes reconciled'),
     CheckpointStat('checkpoint_pages_visited_internal', 'number of internal pages visited'),
     CheckpointStat('checkpoint_pages_visited_leaf', 'number of leaf pages visited'),
+    CheckpointStat('checkpoint_parallel_pages_reconciled', 'number of pages reconciled by checkpoint parallel worker threads'),
     CheckpointStat('checkpoint_prep_max', 'prepare max time (msecs)', 'no_clear,no_scale'),
     CheckpointStat('checkpoint_prep_min', 'prepare min time (msecs)', 'no_clear,no_scale'),
     CheckpointStat('checkpoint_prep_recent', 'prepare most recent time (msecs)', 'no_clear,no_scale'),
     CheckpointStat('checkpoint_prep_running', 'prepare currently running', 'no_clear,no_scale'),
     CheckpointStat('checkpoint_prep_total', 'prepare total time (msecs)', 'no_clear,no_scale'),
     CheckpointStat('checkpoint_presync', 'number of handles visited after writes complete'),
+    CheckpointStat('checkpoint_rec_blkcache_write', 'total time (msecs) writing pages to stable storage during checkpoint reconciliation'),
     CheckpointStat('checkpoint_scrub_max', 'scrub max time (msecs)', 'no_clear,no_scale'),
     CheckpointStat('checkpoint_scrub_min', 'scrub min time (msecs)', 'no_clear,no_scale'),
     CheckpointStat('checkpoint_scrub_recent', 'scrub most recent time (msecs)', 'no_clear,no_scale'),
@@ -533,6 +533,7 @@ conn_stats = [
     CheckpointStat('checkpoint_state', 'progress state', 'no_clear,no_scale'),
     CheckpointStat('checkpoint_stop_stress_active', 'stop timing stress active', 'no_clear,no_scale'),
     CheckpointStat('checkpoint_sync', 'number of files synced'),
+    CheckpointStat('checkpoint_sync_rec_pct', 'the percentage of checkpoint sync time spent in reconciliation across all threads', 'no_clear,no_scale'),
     CheckpointStat('checkpoint_time_max', 'max time (msecs)', 'no_clear,no_scale'),
     CheckpointStat('checkpoint_time_min', 'min time (msecs)', 'no_clear,no_scale'),
     CheckpointStat('checkpoint_time_recent', 'most recent time (msecs)', 'no_clear,no_scale'),
@@ -543,32 +544,6 @@ conn_stats = [
     CheckpointStat('checkpoints_compact', 'number of checkpoints started by compaction'),
     CheckpointStat('checkpoints_total_failed', 'total failed number of checkpoints'),
     CheckpointStat('checkpoints_total_succeed', 'total succeed number of checkpoints'),
-
-    ##########################################
-    # Chunk cache statistics
-    ##########################################
-    ChunkCacheStat('chunkcache_bytes_inuse', 'total bytes used by the cache'),
-    ChunkCacheStat('chunkcache_bytes_inuse_pinned', 'total bytes used by the cache for pinned chunks'),
-    ChunkCacheStat('chunkcache_bytes_read_persistent', 'total bytes read from persistent content'),
-    ChunkCacheStat('chunkcache_chunks_evicted', 'chunks evicted'),
-    ChunkCacheStat('chunkcache_chunks_inuse', 'total chunks held by the chunk cache'),
-    ChunkCacheStat('chunkcache_chunks_loaded_from_flushed_tables', 'number of chunks loaded from flushed tables in chunk cache'),
-    ChunkCacheStat('chunkcache_chunks_pinned', 'total pinned chunks held by the chunk cache'),
-    ChunkCacheStat('chunkcache_created_from_metadata', 'total number of chunks inserted on startup from persisted metadata'),
-    ChunkCacheStat('chunkcache_exceeded_bitmap_capacity', 'could not allocate due to exceeding bitmap capacity'),
-    ChunkCacheStat('chunkcache_exceeded_capacity', 'could not allocate due to exceeding capacity'),
-    ChunkCacheStat('chunkcache_io_failed', 'number of times a read from storage failed'),
-    ChunkCacheStat('chunkcache_lookups', 'lookups'),
-    ChunkCacheStat('chunkcache_metadata_inserted', 'number of metadata entries inserted'),
-    ChunkCacheStat('chunkcache_metadata_removed', 'number of metadata entries removed'),
-    ChunkCacheStat('chunkcache_metadata_work_units_created', 'number of metadata inserts/deletes pushed to the worker thread'),
-    ChunkCacheStat('chunkcache_metadata_work_units_dequeued', 'number of metadata inserts/deletes read by the worker thread'),
-    ChunkCacheStat('chunkcache_metadata_work_units_dropped', 'number of metadata inserts/deletes dropped by the worker thread'),
-    ChunkCacheStat('chunkcache_misses', 'number of misses'),
-    ChunkCacheStat('chunkcache_retries', 'retried accessing a chunk while I/O was in progress'),
-    ChunkCacheStat('chunkcache_retries_checksum_mismatch', 'retries from a chunk cache checksum mismatch'),
-    ChunkCacheStat('chunkcache_spans_chunks_read', 'aggregate number of spanned chunks on read'),
-    ChunkCacheStat('chunkcache_toomany_retries', 'timed out due to too many retries'),
 
     ##########################################
     # Cursor operations
@@ -611,7 +586,12 @@ conn_stats = [
     ##########################################
     # Disagg statistics
     ##########################################
+    DisaggStat('disagg_abandon_checkpoint_failed', 'abandon checkpoints failed'),
+    DisaggStat('disagg_abandon_checkpoint_succeed', 'abandon checkpoints succeeded'),
+    DisaggStat('disagg_apply_checkpoint_meta_time', 'apply checkpoint metadata most recent time (msecs)'),
+    DisaggStat('disagg_conn_reconfig', 'connection reconfiguration'),
     DisaggStat('disagg_database_size', 'database size', 'size'),
+    DisaggStat('disagg_pick_up_checkpoint_time', 'pick up checkpoint most recent time (msecs)'),
     DisaggStat('disagg_role_leader', 'role leader'),
     DisaggStat('disagg_step_down_time', 'step down most recent time (msecs)'),
     DisaggStat('disagg_step_up_time', 'step up most recent time (msecs)'),
@@ -643,7 +623,10 @@ conn_stats = [
     ##########################################
     # Layered table statistics
     ##########################################
+    LayeredStat('layered_table_manager_checkpoints_disagg_pick_up_follower', 'number of checkpoints picked up by a follower'),
     LayeredStat('layered_table_manager_tables', 'the number of tables the layered table manager has open'),
+    LayeredStat('layered_truncate_list_search_calls', 'the number of times the truncate list was searched'),
+    LayeredStat('layered_truncate_list_search_entries_walked', 'the number of truncate list entries walked during search'),
 
     ##########################################
     # Live Restore statistics
@@ -842,19 +825,20 @@ conn_stats = [
     ##########################################
     # Prefetch statistics
     ##########################################
-    PrefetchStat('prefetch_attempts', 'pre-fetch triggered by page read'),
+    PrefetchStat('prefetch_attempts', 'pre-fetch attempted, session has pre-fetching enabled'),
+    PrefetchStat('prefetch_attempts_succeeded', 'pre-fetch session check passed, pre-fetch work issued to btree'),
     PrefetchStat('prefetch_disk_one', 'pre-fetch not triggered after single disk read'),
-    PrefetchStat('prefetch_failed_start', 'number of times pre-fetch failed to start'),
     PrefetchStat('prefetch_pages_fail', 'pre-fetch page not on disk when reading'),
     PrefetchStat('prefetch_pages_queued', 'pre-fetch pages queued'),
     PrefetchStat('prefetch_pages_read', 'pre-fetch pages read in background'),
-    PrefetchStat('prefetch_skipped', 'pre-fetch not triggered by page read'),
     PrefetchStat('prefetch_skipped_disk_read_count', 'pre-fetch not triggered due to disk read count'),
     PrefetchStat('prefetch_skipped_error_ok', 'pre-fetch skipped reading in a page due to harmless error'),
     PrefetchStat('prefetch_skipped_internal_page', 'could not perform pre-fetch on internal page'),
     PrefetchStat('prefetch_skipped_internal_session', 'pre-fetch not triggered due to internal session'),
+    PrefetchStat('prefetch_skipped_internal_split_gen', 'pre-fetch skipped traversal of internal page due to active split generation'),
     PrefetchStat('prefetch_skipped_no_flag_set', 'could not perform pre-fetch on ref without the pre-fetch flag set'),
     PrefetchStat('prefetch_skipped_no_valid_dhandle', 'pre-fetch not triggered as there is no valid dhandle'),
+    PrefetchStat('prefetch_skipped_queue_full', 'pre-fetch not triggered, pre-fetch queue is full'),
     PrefetchStat('prefetch_skipped_same_ref', 'pre-fetch not repeating for recently pre-fetched ref'),
     PrefetchStat('prefetch_skipped_special_handle', 'pre-fetch not triggered due to special btree handle'),
 
@@ -972,6 +956,8 @@ conn_stats = [
     TxnStat('txn_set_ts_oldest_upd', 'set timestamp oldest updates'),
     TxnStat('txn_set_ts_out_of_order', 'set timestamp global oldest timestamp set to be more recent than the global stable timestamp'),
     TxnStat('txn_set_ts_stable', 'set timestamp stable calls'),
+    TxnStat('txn_set_ts_stable_disagg_epoch', 'set timestamp stable disaggregated schema epoch calls'),
+    TxnStat('txn_set_ts_stable_disagg_epoch_upd', 'set timestamp stable disaggregated schema epoch updates'),
     TxnStat('txn_set_ts_stable_upd', 'set timestamp stable updates'),
     TxnStat('txn_timestamp_oldest_active_read', 'transaction read timestamp of the oldest active reader', 'no_clear,no_scale'),
     TxnStat('txn_walk_sessions', 'transaction walk of concurrent sessions'),
@@ -1024,6 +1010,7 @@ dsrc_stats = [
     ##########################################
     BtreeStat('btree_checkpoint_generation', 'btree checkpoint generation', 'no_clear,no_scale'),
     BtreeStat('btree_checkpoint_pages_reconciled', 'btree number of pages reconciled during checkpoint', 'no_clear,no_scale'),
+    BtreeStat('btree_checkpoint_reconcile_duration', 'time spent walking the tree for checkpoint including dirty page reconciliation time (usecs)', 'no_clear,no_scale'),
     BtreeStat('btree_clean_checkpoint_timer', 'btree clean tree checkpoint expiration time', 'no_clear,no_scale'),
     BtreeStat('btree_column_deleted', 'column-store variable-size deleted values', 'no_scale,tree_walk'),
     BtreeStat('btree_column_internal', 'column-store internal pages', 'no_scale,tree_walk'),
@@ -1208,6 +1195,8 @@ conn_dsrc_stats = [
     CacheStat('cache_eviction_hs_cursor_not_cached', 'history store cursor not cached during eviction'),
     CacheStat('cache_eviction_hs_shared_cursor_not_cached', 'shared history store cursor not cached during eviction'),
     CacheStat('cache_eviction_internal', 'internal pages evicted'),
+    CacheStat('cache_eviction_multiblock_checkpoint_flagged', 'pages with an unresolved multiblock split flagged by checkpoint to be evicted soon'),
+    CacheStat('cache_eviction_multiblock_split_re_reconciled', 'pages with an unresolved multiblock split re-reconciled by checkpoint'),
     CacheStat('cache_eviction_pages_queued_clean', 'eviction walk pages queued that were clean'),
     CacheStat('cache_eviction_pages_queued_dirty', 'eviction walk pages queued that were dirty'),
     CacheStat('cache_eviction_pages_queued_updates', 'eviction walk pages queued that had updates'),
@@ -1249,19 +1238,20 @@ conn_dsrc_stats = [
     CacheStat('cache_hs_update_processed', 'history store table update to be processed'),
     CacheStat('cache_hs_write_squash', 'history store table writes requiring squashed modifies'),
     CacheStat('cache_inmem_split', 'in-memory page splits'),
+    CacheStat('cache_inmem_split_ingest', 'in-memory page splits performed on ingest btree pages'),
     CacheStat('cache_inmem_splittable', 'in-memory page passed criteria to be split'),
     CacheStat('cache_obsolete_updates_removed', 'obsolete updates removed'),
     CacheStat('cache_pages_prefetch', 'pages requested from the cache due to pre-fetch'),
-    CacheStat('cache_pages_requested', 'pages requested from the cache'),
     CacheStat('cache_pages_requested_hs', 'pages requested from the history store'),
     CacheStat('cache_pages_requested_internal', 'pages requested from the cache internal'),
     CacheStat('cache_pages_requested_leaf', 'pages requested from the cache leaf'),
-    CacheStat('cache_read', 'pages read into cache'),
     CacheStat('cache_read_checkpoint', 'pages read into cache by checkpoint'),
     CacheStat('cache_read_deleted', 'pages read into cache after truncate'),
     CacheStat('cache_read_deleted_prepared', 'pages read into cache after truncate in prepare state'),
     CacheStat('cache_read_delta_updates', 'size of delta updates reconstructed on the base page'),
+    CacheStat('cache_read_internal', 'internal pages read into cache'),
     CacheStat('cache_read_internal_delta', 'number of internal pages read that had deltas attached'),
+    CacheStat('cache_read_leaf', 'leaf pages read into cache'),
     CacheStat('cache_read_leaf_delta', 'number of leaf pages read that had deltas attached'),
     CacheStat('cache_read_overflow', 'overflow pages read into cache'),
     CacheStat('cache_read_restored_tombstone_bytes', 'size of tombstones restored when reading a page'),
@@ -1362,6 +1352,7 @@ conn_dsrc_stats = [
     ##########################################
     # Layered table statistics
     ##########################################
+    LayeredStat('layered_curs_advance_stable', 'Layered table cursor advances to a newer checkpoint for the stable btree'),
     LayeredStat('layered_curs_insert', 'Layered table cursor insert operations'),
     LayeredStat('layered_curs_modify', 'Layered table cursor modify operations'),
     LayeredStat('layered_curs_next', 'Layered table cursor next operations'),
@@ -1371,6 +1362,7 @@ conn_dsrc_stats = [
     LayeredStat('layered_curs_prev_ingest', 'Layered table cursor prev operations from the ingest btrees'),
     LayeredStat('layered_curs_prev_stable', 'Layered table cursor prev operations from the stable btrees'),
     LayeredStat('layered_curs_remove', 'Layered table cursor remove operations'),
+    LayeredStat('layered_curs_reopen_ingest', 'Layered table cursor reopens ingest btree'),
     LayeredStat('layered_curs_search', 'Layered table cursor search operations'),
     LayeredStat('layered_curs_search_ingest', 'Layered table cursor search operations from the ingest btrees'),
     LayeredStat('layered_curs_search_near', 'Layered table cursor search near operations'),
@@ -1378,8 +1370,6 @@ conn_dsrc_stats = [
     LayeredStat('layered_curs_search_near_stable', 'Layered table cursor search near operations from the stable btrees'),
     LayeredStat('layered_curs_search_stable', 'Layered table cursor search operations from the stable btrees'),
     LayeredStat('layered_curs_update', 'Layered table cursor update operations'),
-    LayeredStat('layered_curs_upgrade_ingest', 'Layered table cursor upgrade state for the ingest btrees'),
-    LayeredStat('layered_curs_upgrade_stable', 'Layered table cursor upgrade state for the stable btrees'),
 
     LayeredStat('layered_table_manager_checkpoints', 'checkpoints performed on this table by the layered table manager'),
     LayeredStat('layered_table_manager_checkpoints_disagg_pick_up_failed', 'disagg pick up checkpoints failed'),
