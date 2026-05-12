@@ -1,6 +1,9 @@
 create_test_executable(catch2-cur-layered-tests
     SOURCES
         test_cur_layered.cpp
+        ${CMAKE_SOURCE_DIR}/test/catch2/utils.cpp
+        ${CMAKE_SOURCE_DIR}/test/catch2/wrappers/mock_connection.cpp
+        ${CMAKE_SOURCE_DIR}/test/catch2/wrappers/mock_session.cpp
     INCLUDES
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_SOURCE_DIR}
