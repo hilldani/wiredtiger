@@ -13,6 +13,8 @@ Three static helpers deserve to be non-static because their logic is self-contai
 | `__clayered_lookup_constituent` | `src/cursor/cur_layered.c:1616` | cursor vtable: `set_key`, `search`, `get_value` |
 | `__clayered_put` | `src/cursor/cur_layered.c:2049` | FFF target: `__wt_layered_table_truncate_detect_write_conflict`; cursor vtable: `set_key`, `set_value`, `insert`, `update` |
 | `__clayered_remove_leader` | `src/cursor/cur_layered.c:2159` | cursor vtable: `set_key`, `remove` |
+| `__clayered_reset_cursors` | `src/cursor/cur_layered.c:1338` | cursor vtable: `reset` ×2; flag macros `F_CLR`, `F_ISSET` |
+| `__clayered_lookup` | `src/cursor/cur_layered.c:1636` | `__clayered_lookup_constituent` ×2, `__wt_clayered_deleted`, `__wt_truncate_delete_visible_check`, `__clayered_reset_cursors` |
 
 Also move `WT_CLAYERED_PUT_OP` enum (currently defined locally in `cur_layered.c` around line 18) to `src/include/cursor.h`, just before the `WT_CURSOR_LAYERED` struct at line 523. This makes the enum available in the test's `extern "C"` declarations without re-defining values.
 
