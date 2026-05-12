@@ -9,18 +9,17 @@
 #include "wt_internal.h"
 
 static int __clayered_copy_bounds(WT_CURSOR_LAYERED *);
-static int __clayered_lookup(WT_SESSION_IMPL *, WT_CURSOR_LAYERED *, WT_ITEM *);
+int __clayered_lookup(WT_SESSION_IMPL *, WT_CURSOR_LAYERED *, WT_ITEM *);
 static int __clayered_open_cursors(WT_SESSION_IMPL *, WT_CURSOR_LAYERED *);
-static int __clayered_reset_cursors(WT_CURSOR_LAYERED *, bool);
+int __clayered_reset_cursors(WT_CURSOR_LAYERED *, bool);
 static int __clayered_search_near(WT_CURSOR *, int *);
 static int __clayered_adjust_state(WT_CURSOR_LAYERED *, bool, bool *);
 
-/* Operations passed to __clayered_put. */
-typedef enum {
-    WT_CLAYERED_PUT_INSERT,
-    WT_CLAYERED_PUT_UPDATE,
-    WT_CLAYERED_PUT_RESERVE,
-} WT_CLAYERED_PUT_OP;
+int __clayered_lookup_constituent(WT_CURSOR *, WT_CURSOR_LAYERED *, WT_ITEM *);
+int __clayered_put(WT_SESSION_IMPL *, WT_CURSOR_LAYERED *, const WT_ITEM *, const WT_ITEM *,
+  WT_CLAYERED_PUT_OP);
+int __clayered_remove_leader(WT_SESSION_IMPL *, WT_CURSOR_LAYERED *, const WT_ITEM *, bool);
+
 
 /*
  * __clayered_is_deleted_encoded --
@@ -1336,7 +1335,7 @@ err:
  * __clayered_reset_cursors --
  *     Reset any positioned constituent cursors.
  */
-static int
+int
 __clayered_reset_cursors(WT_CURSOR_LAYERED *clayered, bool skip_ingest)
 {
     WT_CURSOR *c;
@@ -1613,7 +1612,7 @@ __clayered_reopen(WT_CURSOR *cursor, bool sweep_check_only)
  * __clayered_lookup_constituent --
  *     The cursor-agnostic parts of layered table lookups.
  */
-static int
+int
 __clayered_lookup_constituent(WT_CURSOR *c, WT_CURSOR_LAYERED *clayered, WT_ITEM *value)
 {
     WT_CURSOR *cursor;
@@ -1634,7 +1633,7 @@ __clayered_lookup_constituent(WT_CURSOR *c, WT_CURSOR_LAYERED *clayered, WT_ITEM
  * __clayered_lookup --
  *     Position a layered cursor.
  */
-static int
+int
 __clayered_lookup(WT_SESSION_IMPL *session, WT_CURSOR_LAYERED *clayered, WT_ITEM *value)
 {
     WT_CONNECTION_IMPL *conn;
@@ -2046,7 +2045,7 @@ err:
  * __clayered_put --
  *     Put an entry into the desired tree.
  */
-static WT_INLINE int
+int
 __clayered_put(WT_SESSION_IMPL *session, WT_CURSOR_LAYERED *clayered, const WT_ITEM *key,
   const WT_ITEM *value, WT_CLAYERED_PUT_OP op)
 {
@@ -2156,7 +2155,7 @@ err:
  * __clayered_remove_leader --
  *     Remove an entry from the stable table.
  */
-static WT_INLINE int
+int
 __clayered_remove_leader(
   WT_SESSION_IMPL *session, WT_CURSOR_LAYERED *clayered, const WT_ITEM *key, bool positioned)
 {

@@ -516,6 +516,13 @@ struct __wt_cursor_version {
     uint8_t flags;
 };
 
+/* Operations passed to __clayered_put. */
+typedef enum {
+    WT_CLAYERED_PUT_INSERT,
+    WT_CLAYERED_PUT_UPDATE,
+    WT_CLAYERED_PUT_RESERVE,
+} WT_CLAYERED_PUT_OP;
+
 /*
  * WT_CURSOR_LAYERED --
  *	A layered table cursor.
