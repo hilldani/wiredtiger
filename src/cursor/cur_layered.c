@@ -12,13 +12,28 @@ static int __clayered_copy_bounds(WT_CURSOR_LAYERED *);
 int __clayered_lookup(WT_SESSION_IMPL *, WT_CURSOR_LAYERED *, WT_ITEM *);
 static int __clayered_open_cursors(WT_SESSION_IMPL *, WT_CURSOR_LAYERED *);
 int __clayered_reset_cursors(WT_CURSOR_LAYERED *, bool);
-static int __clayered_search_near(WT_CURSOR *, int *);
+int __clayered_search_near(WT_CURSOR *, int *);
 static int __clayered_adjust_state(WT_CURSOR_LAYERED *, bool, bool *);
 
 int __clayered_lookup_constituent(WT_CURSOR *, WT_CURSOR_LAYERED *, WT_ITEM *);
 int __clayered_put(WT_SESSION_IMPL *, WT_CURSOR_LAYERED *, const WT_ITEM *, const WT_ITEM *,
   WT_CLAYERED_PUT_OP);
 int __clayered_remove_leader(WT_SESSION_IMPL *, WT_CURSOR_LAYERED *, const WT_ITEM *, bool);
+int __clayered_compare(WT_CURSOR *, WT_CURSOR *, int *);
+int __clayered_next(WT_CURSOR *);
+int __clayered_prev(WT_CURSOR *);
+int __clayered_reset(WT_CURSOR *);
+int __clayered_bound(WT_CURSOR *, const char *);
+int __clayered_cache(WT_CURSOR *);
+int __clayered_reopen(WT_CURSOR *, bool);
+int __clayered_search(WT_CURSOR *);
+int __clayered_insert(WT_CURSOR *);
+int __clayered_modify(WT_CURSOR *, WT_MODIFY *, int);
+int __clayered_update(WT_CURSOR *);
+int __clayered_remove(WT_CURSOR *);
+int __clayered_reserve(WT_CURSOR *);
+int __clayered_largest_key(WT_CURSOR *);
+int __clayered_close(WT_CURSOR *);
 
 
 /*
@@ -740,7 +755,7 @@ __clayered_get_current(WT_SESSION_IMPL *session, WT_CURSOR_LAYERED *clayered, bo
  * __clayered_compare --
  *     WT_CURSOR->compare implementation for the layered cursor type.
  */
-static int
+int
 __clayered_compare(WT_CURSOR *a, WT_CURSOR *b, int *cmpp)
 {
     WT_COLLATOR *collator;
@@ -1273,7 +1288,7 @@ err:
  * __clayered_next --
  *     WT_CURSOR->next method for the layered cursor type.
  */
-static int
+int
 __clayered_next(WT_CURSOR *cursor)
 {
     WT_CURSOR_LAYERED *clayered;
@@ -1304,7 +1319,7 @@ err:
  * __clayered_prev --
  *     WT_CURSOR->prev method for the layered cursor type.
  */
-static int
+int
 __clayered_prev(WT_CURSOR *cursor)
 {
     WT_CURSOR_LAYERED *clayered;
@@ -1363,7 +1378,7 @@ __clayered_reset_cursors(WT_CURSOR_LAYERED *clayered, bool skip_ingest)
  * __clayered_reset --
  *     WT_CURSOR->reset method for the layered cursor type.
  */
-static int
+int
 __clayered_reset(WT_CURSOR *cursor)
 {
     WT_CURSOR_LAYERED *clayered;
@@ -1450,7 +1465,7 @@ __clayered_copy_bounds(WT_CURSOR_LAYERED *clayered)
  * __clayered_bound --
  *     WT_CURSOR->bound method for the layered cursor type.
  */
-static int
+int
 __clayered_bound(WT_CURSOR *cursor, const char *config)
 {
     WT_COLLATOR *collator;
@@ -1503,7 +1518,7 @@ err:
  * __clayered_cache --
  *     WT_CURSOR->cache method for the layered cursor type.
  */
-static int
+int
 __clayered_cache(WT_CURSOR *cursor)
 {
     WT_CURSOR_LAYERED *clayered;
@@ -1573,7 +1588,7 @@ __clayered_reopen_int(WT_CURSOR *cursor)
  * __clayered_reopen --
  *     WT_CURSOR->reopen method for the layered cursor type.
  */
-static int
+int
 __clayered_reopen(WT_CURSOR *cursor, bool sweep_check_only)
 {
     WT_DATA_HANDLE *dhandle;
@@ -1692,7 +1707,7 @@ err:
  * __clayered_search --
  *     WT_CURSOR->search method for the layered cursor type.
  */
-static int
+int
 __clayered_search(WT_CURSOR *cursor)
 {
     WT_CURSOR_LAYERED *clayered;
@@ -1978,7 +1993,7 @@ err:
  * __clayered_search_near --
  *     WT_CURSOR->search_near method for the layered cursor type.
  */
-static int
+int
 __clayered_search_near(WT_CURSOR *cursor, int *exactp)
 {
     WT_CURSOR_LAYERED *clayered;
@@ -2217,7 +2232,7 @@ __clayered_copy_duplicate_kv(WT_CURSOR *cursor)
  * __clayered_insert --
  *     WT_CURSOR->insert method for the layered cursor type.
  */
-static int
+int
 __clayered_insert(WT_CURSOR *cursor)
 {
     WT_CURSOR_LAYERED *clayered;
@@ -2275,7 +2290,7 @@ err:
  * __clayered_update --
  *     WT_CURSOR->update method for the layered cursor type.
  */
-static int
+int
 __clayered_update(WT_CURSOR *cursor)
 {
     WT_CURSOR_LAYERED *clayered;
@@ -2335,7 +2350,7 @@ err:
  * __clayered_remove --
  *     WT_CURSOR->remove method for the layered cursor type.
  */
-static int
+int
 __clayered_remove(WT_CURSOR *cursor)
 {
     WT_CURSOR_LAYERED *clayered;
@@ -2389,7 +2404,7 @@ err:
  * __clayered_reserve --
  *     WT_CURSOR->reserve method for the layered cursor type.
  */
-static int
+int
 __clayered_reserve(WT_CURSOR *cursor)
 {
     WT_CURSOR_LAYERED *clayered;
@@ -2437,7 +2452,7 @@ err:
  * __clayered_largest_key --
  *     WT_CURSOR->largest_key implementation for layered tables.
  */
-static int
+int
 __clayered_largest_key(WT_CURSOR *cursor)
 {
     WT_COLLATOR *collator;
@@ -2551,7 +2566,7 @@ __clayered_close_int(WT_CURSOR *cursor)
  * __clayered_close --
  *     WT_CURSOR->close method for the layered cursor type.
  */
-static int
+int
 __clayered_close(WT_CURSOR *cursor)
 {
     WT_CURSOR_LAYERED *clayered;
@@ -2786,7 +2801,7 @@ __clayered_modify_int(WT_SESSION_IMPL *session, WT_CURSOR *cursor, WT_MODIFY *en
  * __clayered_modify --
  *     WT_CURSOR->modify method for layered cursors.
  */
-static int
+int
 __clayered_modify(WT_CURSOR *cursor, WT_MODIFY *entries, int nentries)
 {
     WT_CURSOR *current;
