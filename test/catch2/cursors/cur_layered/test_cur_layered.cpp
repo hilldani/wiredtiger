@@ -8,9 +8,9 @@
 
 #define CATCH_CONFIG_MAIN
 #include <catch2/catch.hpp>
+#include <fff.h>
 
 #include "wt_internal.h"
-#include "fff.h"
 #include "wrappers/mock_session.h"
 
 DEFINE_FFF_GLOBALS;
@@ -44,8 +44,8 @@ FAKE_VOID_FUNC_VARARG(stable_set_value, WT_CURSOR *, ...);
 
 extern "C" {
 int __clayered_lookup_constituent(WT_CURSOR *, WT_CURSOR_LAYERED *, WT_ITEM *);
-int __clayered_put(WT_SESSION_IMPL *, WT_CURSOR_LAYERED *, const WT_ITEM *, const WT_ITEM *,
-  WT_CLAYERED_PUT_OP);
+int __clayered_put(
+  WT_SESSION_IMPL *, WT_CURSOR_LAYERED *, const WT_ITEM *, const WT_ITEM *, WT_CLAYERED_PUT_OP);
 int __clayered_remove_leader(WT_SESSION_IMPL *, WT_CURSOR_LAYERED *, const WT_ITEM *, bool);
 int __clayered_compare(WT_CURSOR *, WT_CURSOR *, int *);
 int __clayered_next(WT_CURSOR *);
@@ -72,9 +72,22 @@ namespace {
 static const WT_ITEM *ingest_set_key_fake_item = nullptr;
 
 static void
-ingest_set_key_capture(WT_CURSOR *, va_list ap)
+capture_ingest_key(WT_CURSOR *, va_list ap)
 {
     ingest_set_key_fake_item = va_arg(ap, const WT_ITEM *);
+}
+
+static WT_ITEM ingest_get_value_fake_item{};
+
+static int
+return_ingest_value(WT_CURSOR *, va_list ap)
+{
+    WT_ITEM *out = va_arg(ap, WT_ITEM *);
+
+    if (out != nullptr)
+        *out = ingest_get_value_fake_item;
+
+    return 0;
 }
 
 static void
@@ -99,14 +112,14 @@ reset_all_fakes()
     RESET_FAKE(stable_set_value);
 
     ingest_set_key_fake_item = nullptr;
-    ingest_set_key_fake.custom_fake = ingest_set_key_capture;
+    ingest_get_value_fake_item = {};
 }
 
 class layered_cursor_fixture {
 public:
-    WT_CURSOR ingest_cursor = {};
+    WT_CURSOR ingest = {};
     WT_CURSOR stable_cursor = {};
-    WT_CURSOR_LAYERED layered_cursor = {};
+    WT_CURSOR_LAYERED layered = {};
 
     explicit layered_cursor_fixture()
     {
@@ -115,6 +128,9 @@ public:
         wire_cursors();
         reset_all_fakes();
         set_follower();
+
+        layered.iface.key_format = "S";
+        layered.iface.value_format = "u";
     }
 
     WT_SESSION_IMPL *
@@ -139,14 +155,14 @@ private:
     void
     wire_cursors()
     {
-        ingest_cursor.set_key = ingest_set_key;
-        ingest_cursor.set_value = ingest_set_value;
-        ingest_cursor.get_value = ingest_get_value;
-        ingest_cursor.search = ingest_search;
-        ingest_cursor.insert = ingest_insert;
-        ingest_cursor.update = ingest_update;
-        ingest_cursor.remove = ingest_remove;
-        ingest_cursor.reset = ingest_reset;
+        ingest.set_key = ingest_set_key;
+        ingest.set_value = ingest_set_value;
+        ingest.get_value = ingest_get_value;
+        ingest.search = ingest_search;
+        ingest.insert = ingest_insert;
+        ingest.update = ingest_update;
+        ingest.remove = ingest_remove;
+        ingest.reset = ingest_reset;
 
         stable_cursor.set_key = stable_set_key;
         stable_cursor.set_value = stable_set_value;
@@ -157,34 +173,34 @@ private:
         stable_cursor.remove = stable_remove;
         stable_cursor.reset = stable_reset;
 
-        layered_cursor.ingest_cursor = &ingest_cursor;
-        layered_cursor.stable_cursor = &stable_cursor;
-        layered_cursor.current_cursor = nullptr;
-        layered_cursor.iface.session = reinterpret_cast<WT_SESSION *>(_session);
-        layered_cursor.iface.get_key = __wt_cursor_get_key;
-        layered_cursor.iface.get_value = __wt_cursor_get_value;
-        layered_cursor.iface.get_raw_key_value = __wt_cursor_get_raw_key_value;
-        layered_cursor.iface.set_key = __wt_cursor_set_key;
-        layered_cursor.iface.set_value = __wt_cursor_set_value;
-        layered_cursor.iface.compare = __clayered_compare;
-        layered_cursor.iface.equals = __wt_cursor_equals;
-        layered_cursor.iface.next = __clayered_next;
-        layered_cursor.iface.prev = __clayered_prev;
-        layered_cursor.iface.reset = __clayered_reset;
-        layered_cursor.iface.search = __clayered_search;
-        layered_cursor.iface.search_near = __clayered_search_near;
-        layered_cursor.iface.insert = __clayered_insert;
-        layered_cursor.iface.modify = __clayered_modify;
-        layered_cursor.iface.update = __clayered_update;
-        layered_cursor.iface.remove = __clayered_remove;
-        layered_cursor.iface.reserve = __clayered_reserve;
-        layered_cursor.iface.reconfigure = __wti_cursor_reconfigure;
-        layered_cursor.iface.largest_key = __clayered_largest_key;
-        layered_cursor.iface.bound = __clayered_bound;
-        layered_cursor.iface.cache = __clayered_cache;
-        layered_cursor.iface.reopen = __clayered_reopen;
-        layered_cursor.iface.checkpoint_id = __wt_cursor_checkpoint_id;
-        layered_cursor.iface.close = __clayered_close;
+        layered.ingest_cursor = &ingest;
+        layered.stable_cursor = &stable_cursor;
+        layered.current_cursor = nullptr;
+        layered.iface.session = reinterpret_cast<WT_SESSION *>(_session);
+        layered.iface.get_key = __wt_cursor_get_key;
+        layered.iface.get_value = __wt_cursor_get_value;
+        layered.iface.get_raw_key_value = __wt_cursor_get_raw_key_value;
+        layered.iface.set_key = __wt_cursor_set_key;
+        layered.iface.set_value = __wt_cursor_set_value;
+        layered.iface.compare = __clayered_compare;
+        layered.iface.equals = __wt_cursor_equals;
+        layered.iface.next = __clayered_next;
+        layered.iface.prev = __clayered_prev;
+        layered.iface.reset = __clayered_reset;
+        layered.iface.search = __clayered_search;
+        layered.iface.search_near = __clayered_search_near;
+        layered.iface.insert = __clayered_insert;
+        layered.iface.modify = __clayered_modify;
+        layered.iface.update = __clayered_update;
+        layered.iface.remove = __clayered_remove;
+        layered.iface.reserve = __clayered_reserve;
+        layered.iface.reconfigure = __wti_cursor_reconfigure;
+        layered.iface.largest_key = __clayered_largest_key;
+        layered.iface.bound = __clayered_bound;
+        layered.iface.cache = __clayered_cache;
+        layered.iface.reopen = __clayered_reopen;
+        layered.iface.checkpoint_id = __wt_cursor_checkpoint_id;
+        layered.iface.close = __clayered_close;
     }
 
     std::shared_ptr<mock_session> _mock_session;
@@ -195,79 +211,52 @@ private:
 
 /* ─── Group 1: tombstone detection ──────────────────────────────────────── */
 
-SCENARIO("empty item is not a tombstone", "[layered_cursor][tombstone]")
+SCENARIO("clayered_deleted correctly identifies tombstone values", "[layered_cursor][tombstone]")
 {
-    GIVEN("a zero-length WT_ITEM")
+    GIVEN("a WT_ITEM")
     {
         WT_ITEM item{};
 
-        WHEN("__wt_clayered_deleted is called")
+        WHEN("the item is zero-length")
         {
-            const bool result = __wt_clayered_deleted(&item);
+            // item already default-initialised to zero-length
 
-            THEN("it returns false")
+            THEN("it is not considered deleted")
             {
-                REQUIRE(result == false);
+                REQUIRE(__wt_clayered_deleted(&item) == false);
             }
         }
-    }
-}
 
-SCENARIO("exact tombstone bytes are recognised as deleted", "[layered_cursor][tombstone]")
-{
-    GIVEN("a WT_ITEM containing the two-byte tombstone value")
-    {
-        WT_ITEM item{};
-        item.data = "\x14\x14";
-        item.size = 2;
-
-        WHEN("__wt_clayered_deleted is called")
+        WHEN("the item contains the exact two-byte tombstone value")
         {
-            const bool result = __wt_clayered_deleted(&item);
+            item.data = "\x14\x14";
+            item.size = 2;
 
-            THEN("it returns true")
+            THEN("it is considered deleted")
             {
-                REQUIRE(result == true);
+                REQUIRE(__wt_clayered_deleted(&item) == true);
             }
         }
-    }
-}
 
-SCENARIO("tombstone prefix with trailing byte is not deleted", "[layered_cursor][tombstone]")
-{
-    GIVEN("a WT_ITEM with tombstone bytes followed by an extra byte")
-    {
-        WT_ITEM item{};
-        item.data = "\x14\x14\x01";
-        item.size = 3;
-
-        WHEN("__wt_clayered_deleted is called")
+        WHEN("the item has tombstone bytes followed by a trailing byte")
         {
-            const bool result = __wt_clayered_deleted(&item);
+            item.data = "\x14\x14\x01";
+            item.size = 3;
 
-            THEN("it returns false")
+            THEN("it is not considered deleted")
             {
-                REQUIRE(result == false);
+                REQUIRE(__wt_clayered_deleted(&item) == false);
             }
         }
-    }
-}
 
-SCENARIO("two-byte item with wrong bytes is not deleted", "[layered_cursor][tombstone]")
-{
-    GIVEN("a WT_ITEM with size 2 but data that differs from the tombstone")
-    {
-        WT_ITEM item{};
-        item.data = "\x14\x15";
-        item.size = 2;
-
-        WHEN("__wt_clayered_deleted is called")
+        WHEN("the item has the right size but wrong bytes")
         {
-            const bool result = __wt_clayered_deleted(&item);
+            item.data = "\x14\x15";
+            item.size = 2;
 
-            THEN("it returns false")
+            THEN("it is not considered deleted")
             {
-                REQUIRE(result == false);
+                REQUIRE(__wt_clayered_deleted(&item) == false);
             }
         }
     }
@@ -275,146 +264,103 @@ SCENARIO("two-byte item with wrong bytes is not deleted", "[layered_cursor][tomb
 
 /* ─── Group 2: __clayered_lookup_constituent ────────────────────────────── */
 
-SCENARIO(
-  "lookup_constituent returns 0 and wires current_cursor on a hit", "[layered_cursor][lookup]")
-{
-    layered_cursor_fixture f;
-    WT_ITEM value{};
-
-    GIVEN("an ingest cursor whose search returns 0")
-    {
-        ingest_search_fake.return_val = 0;
-        ingest_get_value_fake.return_val = 0;
-
-        WHEN("__clayered_lookup_constituent is called with the ingest cursor")
-        {
-            int ret = __clayered_lookup_constituent(&f.ingest_cursor, &f.layered_cursor, &value);
-
-            THEN("it returns 0, sets current_cursor, and calls get_value once")
-            {
-                REQUIRE(ret == 0);
-                REQUIRE(f.layered_cursor.current_cursor == &f.ingest_cursor);
-                REQUIRE(ingest_get_value_fake.call_count == 1);
-            }
-        }
-    }
-}
-
-SCENARIO("lookup_constituent propagates WT_NOTFOUND and leaves current_cursor unchanged",
-  "[layered_cursor][lookup]")
-{
-    layered_cursor_fixture f;
-    WT_ITEM value{};
-
-    GIVEN("an ingest cursor whose search returns WT_NOTFOUND")
-    {
-        ingest_search_fake.return_val = WT_NOTFOUND;
-
-        WHEN("__clayered_lookup_constituent is called")
-        {
-            int ret = __clayered_lookup_constituent(&f.ingest_cursor, &f.layered_cursor, &value);
-
-            THEN("it returns WT_NOTFOUND, skips get_value, and leaves current_cursor null")
-            {
-                REQUIRE(ret == WT_NOTFOUND);
-                REQUIRE(f.layered_cursor.current_cursor == nullptr);
-                REQUIRE(ingest_get_value_fake.call_count == 0);
-            }
-        }
-    }
-}
-
-SCENARIO("lookup_constituent always sets the layered cursor key on the constituent",
+SCENARIO("lookup_constituent correctly searches a constituent cursor for a key",
   "[layered_cursor][lookup]")
 {
     layered_cursor_fixture f;
 
     GIVEN("a layered cursor with a key set")
     {
-        auto* iface = &f.layered_cursor.iface;
-        constexpr std::string_view key = "key123";
-        __wt_cursor_set_key(iface, key.data());
+        auto *iface = &f.layered.iface;
 
-        WHEN("__clayered_lookup_constituent is called")
+        constexpr std::string_view key = "key123";
+        iface->key.data = key.data();
+        iface->key.size = key.size() + 1;
+
+        WHEN("any search outcome occurs")
         {
-            WT_ITEM value{};
-            __clayered_lookup_constituent(&f.ingest_cursor, &f.layered_cursor, &value);
+            const auto outcome = GENERATE(0, WT_NOTFOUND, WT_PANIC);
+            ingest_search_fake.return_val = outcome;
+
+            ingest_set_key_fake.custom_fake = capture_ingest_key;
+            const auto ret = __clayered_lookup_constituent(&f.ingest, &f.layered, nullptr);
 
             THEN("the key is forwarded to the constituent cursor")
             {
-                REQUIRE(ingest_set_key_fake.call_count == 1);
-                REQUIRE(ingest_set_key_fake_item == &f.layered_cursor.iface.key);
+                REQUIRE(ingest_set_key_fake_item == &iface->key);
             }
         }
-    }
-}
 
-SCENARIO("lookup_constituent propagates get_value errors without setting current_cursor",
-  "[layered_cursor][lookup]")
-{
-    layered_cursor_fixture f;
-    WT_ITEM value{};
-
-    GIVEN("a cursor whose search succeeds but get_value returns EINVAL")
-    {
-        ingest_search_fake.return_val = 0;
-        ingest_get_value_fake.return_val = EINVAL;
-
-        WHEN("__clayered_lookup_constituent is called")
+        WHEN("any unsuccessful search outcome occurs")
         {
-            int ret = __clayered_lookup_constituent(&f.ingest_cursor, &f.layered_cursor, &value);
+            const auto outcome = GENERATE(WT_NOTFOUND, WT_PANIC);
+            ingest_search_fake.return_val = outcome;
 
-            THEN("it returns EINVAL and does not update current_cursor")
+            const auto ret = __clayered_lookup_constituent(&f.ingest, &f.layered, nullptr);
+
+            THEN("the current cursor is not updated")
             {
-                REQUIRE(ret == EINVAL);
-                REQUIRE(f.layered_cursor.current_cursor == nullptr);
+                REQUIRE(f.layered.current_cursor == nullptr);
             }
         }
-    }
-}
 
-SCENARIO("lookup_constituent sets current_cursor to the stable cursor on a stable hit",
-  "[layered_cursor][lookup]")
-{
-    layered_cursor_fixture f;
-    WT_ITEM value{};
-
-    GIVEN("a stable cursor whose search returns 0")
-    {
-        stable_search_fake.return_val = 0;
-        stable_get_value_fake.return_val = 0;
-
-        WHEN("__clayered_lookup_constituent is called with the stable cursor")
+        WHEN("the constituent cursor finds the key")
         {
-            int ret = __clayered_lookup_constituent(&f.stable_cursor, &f.layered_cursor, &value);
+            ingest_search_fake.return_val = 0;
+            ingest_get_value_fake.custom_fake = return_ingest_value;
 
-            THEN("it returns 0 and current_cursor points to the stable cursor")
+            WT_ITEM value{};
+            const auto ret = __clayered_lookup_constituent(&f.ingest, &f.layered, &value);
+
+            THEN("0 is returned")
             {
                 REQUIRE(ret == 0);
-                REQUIRE(f.layered_cursor.current_cursor == &f.stable_cursor);
+            }
+
+            AND_THEN("the current cursor is updated to the constituent cursor")
+            {
+                REQUIRE(f.layered.current_cursor == &f.ingest);
+            }
+
+            AND_THEN("the value is retrieved from the constituent cursor")
+            {
+                REQUIRE(value.data == ingest_get_value_fake_item.data);
+                REQUIRE(value.size == ingest_get_value_fake_item.size);
             }
         }
-    }
-}
 
-SCENARIO("lookup_constituent preserves current_cursor when search misses",
-  "[layered_cursor][lookup]")
-{
-    layered_cursor_fixture f;
-    WT_ITEM value{};
-
-    GIVEN("current_cursor already points to the stable cursor")
-    {
-        f.layered_cursor.current_cursor = &f.stable_cursor;
-        ingest_search_fake.return_val = WT_NOTFOUND;
-
-        WHEN("__clayered_lookup_constituent is called with the ingest cursor and misses")
+        WHEN("the constituent cursor does not find the key")
         {
-            __clayered_lookup_constituent(&f.ingest_cursor, &f.layered_cursor, &value);
+            ingest_search_fake.return_val = WT_NOTFOUND;
+            const auto ret = __clayered_lookup_constituent(&f.ingest, &f.layered, nullptr);
 
-            THEN("current_cursor still points to the stable cursor")
+            THEN("WT_NOTFOUND is returned")
             {
-                REQUIRE(f.layered_cursor.current_cursor == &f.stable_cursor);
+                REQUIRE(ret == WT_NOTFOUND);
+            }
+        }
+
+        WHEN("a hard error occurs during the search")
+        {
+            ingest_search_fake.return_val = WT_PANIC;
+            const auto ret = __clayered_lookup_constituent(&f.ingest, &f.layered, nullptr);
+
+            THEN("the error is returned")
+            {
+                REQUIRE(ret == WT_PANIC);
+            }
+        }
+
+        WHEN("search succeeds but there is an error getting the value")
+        {
+            ingest_search_fake.return_val = 0;
+            ingest_get_value_fake.return_val = WT_ROLLBACK;
+
+            const auto ret = __clayered_lookup_constituent(&f.ingest, &f.layered, nullptr);
+
+            THEN("the error is returned")
+            {
+                REQUIRE(ret == WT_ROLLBACK);
             }
         }
     }

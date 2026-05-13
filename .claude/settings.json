@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cmake -B build -G Ninja -DHAVE_UNITTEST=1 -DCMAKE_BUILD_TYPE=Debug)",
+      "Bash(cmake --build build --target catch2-cur-layered-tests)",
+      "Bash(./build/test/catch2/cursors/cur_layered/catch2-cur-layered-tests)"
+    ]
+  }
+}
