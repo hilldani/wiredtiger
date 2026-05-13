@@ -142,88 +142,81 @@ private:
 
 } // namespace
 
-/* ─── Smoke tests for the fixture ───────────────────────────────────────── */
+/* ─── Group 1: tombstone detection ──────────────────────────────────────── */
 
-SCENARIO("fixture wires constituent cursors into the layered cursor", "[layered_cursor][fixture]")
+SCENARIO("empty item is not a tombstone", "[layered_cursor][tombstone]")
 {
-    GIVEN("a default-constructed fixture")
+    GIVEN("a zero-length WT_ITEM")
     {
-        layered_cursor_fixture fx;
+        WT_ITEM item{};
 
-        THEN("ingest_cursor points at the ingest cursor")
+        WHEN("__wt_clayered_deleted is called")
         {
-            REQUIRE(fx.clayered.ingest_cursor == &fx.ingest_cursor);
-        }
+            const bool result = __wt_clayered_deleted(&item);
 
-        THEN("stable_cursor points at the stable cursor")
-        {
-            REQUIRE(fx.clayered.stable_cursor == &fx.stable_cursor);
-        }
-
-        THEN("current_cursor is null")
-        {
-            REQUIRE(fx.clayered.current_cursor == nullptr);
-        }
-
-        THEN("session is wired so CUR2S resolves")
-        {
-            REQUIRE(fx.clayered.iface.session == reinterpret_cast<WT_SESSION *>(fx.session()));
-        }
-    }
-}
-
-SCENARIO("fixture defaults to follower mode", "[layered_cursor][fixture]")
-{
-    GIVEN("a default-constructed fixture")
-    {
-        layered_cursor_fixture fx;
-
-        THEN("the connection reports leader = false")
-        {
-            REQUIRE(S2C(fx.session())->layered_table_manager.leader == false);
-        }
-
-        WHEN("set_leader is called")
-        {
-            fx.set_leader();
-
-            THEN("the connection reports leader = true")
+            THEN("it returns false")
             {
-                REQUIRE(S2C(fx.session())->layered_table_manager.leader == true);
+                REQUIRE(result == false);
             }
         }
     }
 }
 
-SCENARIO("FFF fakes track calls independently per cursor", "[layered_cursor][fixture]")
+SCENARIO("exact tombstone bytes are recognised as deleted", "[layered_cursor][tombstone]")
 {
-    GIVEN("a default-constructed fixture")
+    GIVEN("a WT_ITEM containing the two-byte tombstone value")
     {
-        layered_cursor_fixture fx;
+        WT_ITEM item{};
+        item.data = "\x14\x14";
+        item.size = 2;
 
-        WHEN("search is called on the ingest cursor")
+        WHEN("__wt_clayered_deleted is called")
         {
-            ingest_search(&fx.ingest_cursor);
+            const bool result = __wt_clayered_deleted(&item);
 
-            THEN("ingest_search call count is 1")
+            THEN("it returns true")
             {
-                REQUIRE(ingest_search_fake.call_count == 1);
-            }
-
-            THEN("stable_search call count remains 0")
-            {
-                REQUIRE(stable_search_fake.call_count == 0);
+                REQUIRE(result == true);
             }
         }
+    }
+}
 
-        WHEN("stable_search is configured to return WT_NOTFOUND")
+SCENARIO("tombstone prefix with trailing byte is not deleted", "[layered_cursor][tombstone]")
+{
+    GIVEN("a WT_ITEM with tombstone bytes followed by an extra byte")
+    {
+        WT_ITEM item{};
+        item.data = "\x14\x14\x01";
+        item.size = 3;
+
+        WHEN("__wt_clayered_deleted is called")
         {
-            stable_search_fake.return_val = WT_NOTFOUND;
-            int ret = stable_search(&fx.stable_cursor);
+            const bool result = __wt_clayered_deleted(&item);
 
-            THEN("the configured value is returned")
+            THEN("it returns false")
             {
-                REQUIRE(ret == WT_NOTFOUND);
+                REQUIRE(result == false);
+            }
+        }
+    }
+}
+
+SCENARIO("two-byte item with wrong bytes is not deleted", "[layered_cursor][tombstone]")
+{
+    GIVEN("a WT_ITEM with size 2 but data that differs from the tombstone")
+    {
+        WT_ITEM item{};
+        item.data = "\x14\x15";
+        item.size = 2;
+
+        WHEN("__wt_clayered_deleted is called")
+        {
+            const bool result = __wt_clayered_deleted(&item);
+
+            THEN("it returns false")
+            {
+                REQUIRE(result == false);
             }
         }
     }
