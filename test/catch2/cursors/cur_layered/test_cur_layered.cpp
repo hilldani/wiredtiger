@@ -90,6 +90,22 @@ return_ingest_value(WT_CURSOR *, va_list ap)
     return 0;
 }
 
+static const WT_ITEM *stable_set_key_fake_item = nullptr;
+
+static void
+capture_stable_key(WT_CURSOR *, va_list ap)
+{
+    stable_set_key_fake_item = va_arg(ap, const WT_ITEM *);
+}
+
+static const WT_ITEM *ingest_set_value_fake_item = nullptr;
+
+static void
+capture_ingest_value(WT_CURSOR *, va_list ap)
+{
+    ingest_set_value_fake_item = va_arg(ap, const WT_ITEM *);
+}
+
 static void
 reset_all_fakes()
 {
@@ -113,6 +129,8 @@ reset_all_fakes()
 
     ingest_set_key_fake_item = nullptr;
     ingest_get_value_fake_item = {};
+    stable_set_key_fake_item = nullptr;
+    ingest_set_value_fake_item = nullptr;
 }
 
 class layered_cursor_fixture {
@@ -361,6 +379,274 @@ SCENARIO("lookup_constituent correctly searches a constituent cursor for a key",
             THEN("the error is returned")
             {
                 REQUIRE(ret == WT_ROLLBACK);
+            }
+        }
+    }
+}
+
+/* ─── Group 3: __clayered_put ───────────────────────────────────────────── */
+
+SCENARIO("clayered_put forwards the caller's key to the correct constituent cursor",
+  "[layered_cursor][put]")
+{
+    layered_cursor_fixture f;
+
+    constexpr std::string_view key = "key123";
+    constexpr std::string_view val = "value123";
+    WT_ITEM k{};
+    k.data = key.data();
+    k.size = key.size() + 1;
+    WT_ITEM v{};
+    v.data = val.data();
+    v.size = val.size() + 1;
+
+    const auto op = GENERATE(WT_CLAYERED_PUT_INSERT, WT_CLAYERED_PUT_UPDATE);
+
+    GIVEN("a follower cursor")
+    {
+        f.set_follower();
+
+        WHEN("a write operation is performed")
+        {
+            ingest_set_key_fake.custom_fake = capture_ingest_key;
+            __clayered_put(f.session(), &f.layered, &k, &v, op);
+
+            THEN("the caller's key is forwarded to the ingest cursor")
+            {
+                REQUIRE(ingest_set_key_fake_item == &k);
+            }
+        }
+    }
+
+    GIVEN("a leader cursor")
+    {
+        f.set_leader();
+
+        WHEN("a write operation is performed")
+        {
+            stable_set_key_fake.custom_fake = capture_stable_key;
+            __clayered_put(f.session(), &f.layered, &k, &v, op);
+
+            THEN("the caller's key is forwarded to the stable cursor")
+            {
+                REQUIRE(stable_set_key_fake_item == &k);
+            }
+        }
+    }
+}
+
+SCENARIO("clayered_put dispatches the correct operation to the constituent cursor",
+  "[layered_cursor][put]")
+{
+    layered_cursor_fixture f;
+    f.set_follower();
+
+    constexpr std::string_view key = "key123";
+    constexpr std::string_view val = "value123";
+    WT_ITEM k{};
+    k.data = key.data();
+    k.size = key.size() + 1;
+    WT_ITEM v{};
+    v.data = val.data();
+    v.size = val.size() + 1;
+
+    GIVEN("a follower cursor")
+    {
+        WHEN("the op is INSERT")
+        {
+            __clayered_put(f.session(), &f.layered, &k, &v, WT_CLAYERED_PUT_INSERT);
+
+            THEN("an insert is performed on the constituent cursor")
+            {
+                REQUIRE(ingest_insert_fake.call_count == 1);
+            }
+        }
+
+        WHEN("the op is UPDATE")
+        {
+            __clayered_put(f.session(), &f.layered, &k, &v, WT_CLAYERED_PUT_UPDATE);
+
+            THEN("an update is performed on the constituent cursor")
+            {
+                REQUIRE(ingest_update_fake.call_count == 1);
+            }
+        }
+    }
+}
+
+SCENARIO("clayered_put forwards the caller's value to the constituent cursor for write operations",
+  "[layered_cursor][put]")
+{
+    layered_cursor_fixture f;
+    f.set_follower();
+
+    constexpr std::string_view key = "key123";
+    constexpr std::string_view val = "value123";
+    WT_ITEM k{};
+    k.data = key.data();
+    k.size = key.size() + 1;
+    WT_ITEM v{};
+    v.data = val.data();
+    v.size = val.size() + 1;
+
+    const auto op = GENERATE(WT_CLAYERED_PUT_INSERT, WT_CLAYERED_PUT_UPDATE);
+
+    GIVEN("a follower cursor")
+    {
+        WHEN("a write operation is performed")
+        {
+            ingest_set_value_fake.custom_fake = capture_ingest_value;
+            __clayered_put(f.session(), &f.layered, &k, &v, op);
+
+            THEN("the caller's value is forwarded to the constituent cursor")
+            {
+                REQUIRE(ingest_set_value_fake_item == &v);
+            }
+        }
+    }
+}
+
+SCENARIO("clayered_put establishes cursor position for non-insert operations",
+  "[layered_cursor][put]")
+{
+    layered_cursor_fixture f;
+
+    constexpr std::string_view key = "key123";
+    constexpr std::string_view val = "value123";
+    WT_ITEM k{};
+    k.data = key.data();
+    k.size = key.size() + 1;
+    WT_ITEM v{};
+    v.data = val.data();
+    v.size = val.size() + 1;
+
+    GIVEN("a follower cursor")
+    {
+        f.set_follower();
+
+        WHEN("an UPDATE succeeds")
+        {
+            __clayered_put(f.session(), &f.layered, &k, &v, WT_CLAYERED_PUT_UPDATE);
+
+            THEN("current_cursor is the ingest cursor")
+            {
+                REQUIRE(f.layered.current_cursor == f.layered.ingest_cursor);
+            }
+        }
+    }
+
+    GIVEN("a leader cursor")
+    {
+        f.set_leader();
+
+        WHEN("an UPDATE succeeds")
+        {
+            __clayered_put(f.session(), &f.layered, &k, &v, WT_CLAYERED_PUT_UPDATE);
+
+            THEN("current_cursor is the stable cursor")
+            {
+                REQUIRE(f.layered.current_cursor == f.layered.stable_cursor);
+            }
+        }
+    }
+
+    GIVEN("a cursor in any role")
+    {
+        const auto leader = GENERATE(false, true);
+        if (leader)
+            f.set_leader();
+        else
+            f.set_follower();
+
+        WHEN("an INSERT succeeds")
+        {
+            __clayered_put(f.session(), &f.layered, &k, &v, WT_CLAYERED_PUT_INSERT);
+
+            THEN("current_cursor is not updated")
+            {
+                REQUIRE(f.layered.current_cursor == nullptr);
+            }
+        }
+    }
+}
+
+SCENARIO("clayered_put performs follower-specific setup before writing",
+  "[layered_cursor][put]")
+{
+    layered_cursor_fixture f;
+    f.set_follower();
+
+    constexpr std::string_view key = "key123";
+    constexpr std::string_view val = "value123";
+    WT_ITEM k{};
+    k.data = key.data();
+    k.size = key.size() + 1;
+    WT_ITEM v{};
+    v.data = val.data();
+    v.size = val.size() + 1;
+
+    GIVEN("a follower cursor with the stable cursor positioned")
+    {
+        F_SET(&f.stable_cursor, WT_CURSTD_KEY_SET);
+
+        WHEN("a write operation is issued")
+        {
+            __clayered_put(f.session(), &f.layered, &k, &v, WT_CLAYERED_PUT_INSERT);
+
+            THEN("the stable cursor is reset before the write")
+            {
+                REQUIRE(stable_reset_fake.call_count == 1);
+            }
+        }
+    }
+
+    GIVEN("a follower cursor")
+    {
+        WHEN("conflict detection rejects the write")
+        {
+            __wt_layered_table_truncate_detect_write_conflict_fake.return_val = WT_ROLLBACK;
+            const auto ret =
+              __clayered_put(f.session(), &f.layered, &k, &v, WT_CLAYERED_PUT_INSERT);
+
+            THEN("the conflict error is returned to the caller")
+            {
+                REQUIRE(ret == WT_ROLLBACK);
+            }
+        }
+    }
+}
+
+SCENARIO("clayered_put propagates errors from the constituent write operation",
+  "[layered_cursor][put]")
+{
+    layered_cursor_fixture f;
+    f.set_follower();
+
+    constexpr std::string_view key = "key123";
+    constexpr std::string_view val = "value123";
+    WT_ITEM k{};
+    k.data = key.data();
+    k.size = key.size() + 1;
+    WT_ITEM v{};
+    v.data = val.data();
+    v.size = val.size() + 1;
+
+    GIVEN("a follower cursor")
+    {
+        WHEN("the constituent write fails")
+        {
+            ingest_insert_fake.return_val = WT_PANIC;
+            const auto ret =
+              __clayered_put(f.session(), &f.layered, &k, &v, WT_CLAYERED_PUT_INSERT);
+
+            THEN("the error is returned to the caller")
+            {
+                REQUIRE(ret == WT_PANIC);
+            }
+
+            AND_THEN("current_cursor is not updated")
+            {
+                REQUIRE(f.layered.current_cursor == nullptr);
             }
         }
     }
