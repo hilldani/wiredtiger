@@ -29,6 +29,8 @@ FAKE_VALUE_FUNC(int, ingest_reset, WT_CURSOR *);
 FAKE_VALUE_FUNC_VARARG(int, ingest_get_value, WT_CURSOR *, ...);
 FAKE_VOID_FUNC_VARARG(ingest_set_key, WT_CURSOR *, ...);
 FAKE_VOID_FUNC_VARARG(ingest_set_value, WT_CURSOR *, ...);
+FAKE_VOID_FUNC(ingest_set_key_item, WT_CURSOR *, const WT_ITEM *);
+FAKE_VOID_FUNC(ingest_set_value_item, WT_CURSOR *, const WT_ITEM *);
 
 FAKE_VALUE_FUNC(int, stable_search, WT_CURSOR *);
 FAKE_VALUE_FUNC(int, stable_insert, WT_CURSOR *);
@@ -38,9 +40,10 @@ FAKE_VALUE_FUNC(int, stable_reset, WT_CURSOR *);
 FAKE_VALUE_FUNC_VARARG(int, stable_get_value, WT_CURSOR *, ...);
 FAKE_VOID_FUNC_VARARG(stable_set_key, WT_CURSOR *, ...);
 FAKE_VOID_FUNC_VARARG(stable_set_value, WT_CURSOR *, ...);
+FAKE_VOID_FUNC(stable_set_key_item, WT_CURSOR *, const WT_ITEM *);
 }
 
-/* ─── Functions under test (made non-static in cur_layered.c) ───────────── */
+/* ─── Functions under test (made non-in cur_layered.c) ───────────── */
 
 extern "C" {
 int __clayered_lookup_constituent(WT_CURSOR *, WT_CURSOR_LAYERED *, WT_ITEM *);
@@ -69,17 +72,9 @@ int __clayered_close(WT_CURSOR *);
 
 namespace {
 
-static const WT_ITEM *ingest_set_key_fake_item = nullptr;
+WT_ITEM ingest_get_value_fake_item{};
 
-static void
-capture_ingest_key(WT_CURSOR *, va_list ap)
-{
-    ingest_set_key_fake_item = va_arg(ap, const WT_ITEM *);
-}
-
-static WT_ITEM ingest_get_value_fake_item{};
-
-static int
+int
 return_ingest_value(WT_CURSOR *, va_list ap)
 {
     WT_ITEM *out = va_arg(ap, WT_ITEM *);
@@ -90,23 +85,45 @@ return_ingest_value(WT_CURSOR *, va_list ap)
     return 0;
 }
 
-static const WT_ITEM *stable_set_key_fake_item = nullptr;
-
-static void
-capture_stable_key(WT_CURSOR *, va_list ap)
+WT_ITEM
+make_key()
 {
-    stable_set_key_fake_item = va_arg(ap, const WT_ITEM *);
+    constexpr std::string_view sv = "key123";
+    WT_ITEM item{};
+    item.data = sv.data();
+    item.size = sv.size() + 1;
+    return item;
 }
 
-static const WT_ITEM *ingest_set_value_fake_item = nullptr;
-
-static void
-capture_ingest_value(WT_CURSOR *, va_list ap)
+WT_ITEM
+make_value()
 {
-    ingest_set_value_fake_item = va_arg(ap, const WT_ITEM *);
+    constexpr std::string_view sv = "value123";
+    WT_ITEM item{};
+    item.data = sv.data();
+    item.size = sv.size() + 1;
+    return item;
 }
 
-static void
+void
+ingest_set_key_va(WT_CURSOR *c, va_list ap)
+{
+    ingest_set_key_item(c, va_arg(ap, const WT_ITEM *));
+}
+
+void
+stable_set_key_va(WT_CURSOR *c, va_list ap)
+{
+    stable_set_key_item(c, va_arg(ap, const WT_ITEM *));
+}
+
+void
+ingest_set_value_va(WT_CURSOR *c, va_list ap)
+{
+    ingest_set_value_item(c, va_arg(ap, const WT_ITEM *));
+}
+
+void
 reset_all_fakes()
 {
     RESET_FAKE(__wt_layered_table_truncate_detect_write_conflict);
@@ -117,7 +134,9 @@ reset_all_fakes()
     RESET_FAKE(ingest_reset);
     RESET_FAKE(ingest_get_value);
     RESET_FAKE(ingest_set_key);
+    RESET_FAKE(ingest_set_key_item);
     RESET_FAKE(ingest_set_value);
+    RESET_FAKE(ingest_set_value_item);
     RESET_FAKE(stable_search);
     RESET_FAKE(stable_insert);
     RESET_FAKE(stable_update);
@@ -125,12 +144,14 @@ reset_all_fakes()
     RESET_FAKE(stable_reset);
     RESET_FAKE(stable_get_value);
     RESET_FAKE(stable_set_key);
+    RESET_FAKE(stable_set_key_item);
     RESET_FAKE(stable_set_value);
 
-    ingest_set_key_fake_item = nullptr;
     ingest_get_value_fake_item = {};
-    stable_set_key_fake_item = nullptr;
-    ingest_set_value_fake_item = nullptr;
+
+    ingest_set_key_fake.custom_fake   = ingest_set_key_va;
+    stable_set_key_fake.custom_fake   = stable_set_key_va;
+    ingest_set_value_fake.custom_fake = ingest_set_value_va;
 }
 
 class layered_cursor_fixture {
@@ -169,7 +190,7 @@ public:
         S2C(_session)->layered_table_manager.leader = true;
     }
 
-private:
+protected:
     void
     wire_cursors()
     {
@@ -282,14 +303,13 @@ SCENARIO("clayered_deleted correctly identifies tombstone values", "[layered_cur
 
 /* ─── Group 2: __clayered_lookup_constituent ────────────────────────────── */
 
-SCENARIO("lookup_constituent correctly searches a constituent cursor for a key",
+SCENARIO_METHOD(layered_cursor_fixture,
+  "lookup_constituent correctly searches a constituent cursor for a key",
   "[layered_cursor][lookup]")
 {
-    layered_cursor_fixture f;
-
     GIVEN("a layered cursor with a key set")
     {
-        auto *iface = &f.layered.iface;
+        auto *iface = &layered.iface;
 
         constexpr std::string_view key = "key123";
         iface->key.data = key.data();
@@ -300,12 +320,11 @@ SCENARIO("lookup_constituent correctly searches a constituent cursor for a key",
             const auto outcome = GENERATE(0, WT_NOTFOUND, WT_PANIC);
             ingest_search_fake.return_val = outcome;
 
-            ingest_set_key_fake.custom_fake = capture_ingest_key;
-            const auto ret = __clayered_lookup_constituent(&f.ingest, &f.layered, nullptr);
+            const auto ret = __clayered_lookup_constituent(&ingest, &layered, nullptr);
 
             THEN("the key is forwarded to the constituent cursor")
             {
-                REQUIRE(ingest_set_key_fake_item == &iface->key);
+                REQUIRE(ingest_set_key_item_fake.arg1_val == &iface->key);
             }
         }
 
@@ -314,11 +333,11 @@ SCENARIO("lookup_constituent correctly searches a constituent cursor for a key",
             const auto outcome = GENERATE(WT_NOTFOUND, WT_PANIC);
             ingest_search_fake.return_val = outcome;
 
-            const auto ret = __clayered_lookup_constituent(&f.ingest, &f.layered, nullptr);
+            const auto ret = __clayered_lookup_constituent(&ingest, &layered, nullptr);
 
             THEN("the current cursor is not updated")
             {
-                REQUIRE(f.layered.current_cursor == nullptr);
+                REQUIRE(layered.current_cursor == nullptr);
             }
         }
 
@@ -328,7 +347,7 @@ SCENARIO("lookup_constituent correctly searches a constituent cursor for a key",
             ingest_get_value_fake.custom_fake = return_ingest_value;
 
             WT_ITEM value{};
-            const auto ret = __clayered_lookup_constituent(&f.ingest, &f.layered, &value);
+            const auto ret = __clayered_lookup_constituent(&ingest, &layered, &value);
 
             THEN("0 is returned")
             {
@@ -337,7 +356,7 @@ SCENARIO("lookup_constituent correctly searches a constituent cursor for a key",
 
             AND_THEN("the current cursor is updated to the constituent cursor")
             {
-                REQUIRE(f.layered.current_cursor == &f.ingest);
+                REQUIRE(layered.current_cursor == &ingest);
             }
 
             AND_THEN("the value is retrieved from the constituent cursor")
@@ -350,7 +369,7 @@ SCENARIO("lookup_constituent correctly searches a constituent cursor for a key",
         WHEN("the constituent cursor does not find the key")
         {
             ingest_search_fake.return_val = WT_NOTFOUND;
-            const auto ret = __clayered_lookup_constituent(&f.ingest, &f.layered, nullptr);
+            const auto ret = __clayered_lookup_constituent(&ingest, &layered, nullptr);
 
             THEN("WT_NOTFOUND is returned")
             {
@@ -361,7 +380,7 @@ SCENARIO("lookup_constituent correctly searches a constituent cursor for a key",
         WHEN("a hard error occurs during the search")
         {
             ingest_search_fake.return_val = WT_PANIC;
-            const auto ret = __clayered_lookup_constituent(&f.ingest, &f.layered, nullptr);
+            const auto ret = __clayered_lookup_constituent(&ingest, &layered, nullptr);
 
             THEN("the error is returned")
             {
@@ -374,7 +393,7 @@ SCENARIO("lookup_constituent correctly searches a constituent cursor for a key",
             ingest_search_fake.return_val = 0;
             ingest_get_value_fake.return_val = WT_ROLLBACK;
 
-            const auto ret = __clayered_lookup_constituent(&f.ingest, &f.layered, nullptr);
+            const auto ret = __clayered_lookup_constituent(&ingest, &layered, nullptr);
 
             THEN("the error is returned")
             {
@@ -386,75 +405,58 @@ SCENARIO("lookup_constituent correctly searches a constituent cursor for a key",
 
 /* ─── Group 3: __clayered_put ───────────────────────────────────────────── */
 
-SCENARIO("clayered_put forwards the caller's key to the correct constituent cursor",
+SCENARIO_METHOD(layered_cursor_fixture,
+  "clayered_put forwards the caller's key to the correct constituent cursor",
   "[layered_cursor][put]")
 {
-    layered_cursor_fixture f;
-
-    constexpr std::string_view key = "key123";
-    constexpr std::string_view val = "value123";
-    WT_ITEM k{};
-    k.data = key.data();
-    k.size = key.size() + 1;
-    WT_ITEM v{};
-    v.data = val.data();
-    v.size = val.size() + 1;
-
     const auto op = GENERATE(WT_CLAYERED_PUT_INSERT, WT_CLAYERED_PUT_UPDATE);
 
     GIVEN("a follower cursor")
     {
-        f.set_follower();
+        set_follower();
 
         WHEN("a write operation is performed")
         {
-            ingest_set_key_fake.custom_fake = capture_ingest_key;
-            __clayered_put(f.session(), &f.layered, &k, &v, op);
+            WT_ITEM key = make_key();
+            WT_ITEM value = make_value();
+            __clayered_put(session(), &layered, &key, &value, op);
 
             THEN("the caller's key is forwarded to the ingest cursor")
             {
-                REQUIRE(ingest_set_key_fake_item == &k);
+                REQUIRE(ingest_set_key_item_fake.arg1_val == &key);
             }
         }
     }
 
     GIVEN("a leader cursor")
     {
-        f.set_leader();
+        set_leader();
 
         WHEN("a write operation is performed")
         {
-            stable_set_key_fake.custom_fake = capture_stable_key;
-            __clayered_put(f.session(), &f.layered, &k, &v, op);
+            WT_ITEM key = make_key();
+            WT_ITEM value = make_value();
+            __clayered_put(session(), &layered, &key, &value, op);
 
             THEN("the caller's key is forwarded to the stable cursor")
             {
-                REQUIRE(stable_set_key_fake_item == &k);
+                REQUIRE(stable_set_key_item_fake.arg1_val == &key);
             }
         }
     }
 }
 
-SCENARIO("clayered_put dispatches the correct operation to the constituent cursor",
+SCENARIO_METHOD(layered_cursor_fixture,
+  "clayered_put dispatches the correct operation to the constituent cursor",
   "[layered_cursor][put]")
 {
-    layered_cursor_fixture f;
-    f.set_follower();
-
-    constexpr std::string_view key = "key123";
-    constexpr std::string_view val = "value123";
-    WT_ITEM k{};
-    k.data = key.data();
-    k.size = key.size() + 1;
-    WT_ITEM v{};
-    v.data = val.data();
-    v.size = val.size() + 1;
-
     GIVEN("a follower cursor")
     {
         WHEN("the op is INSERT")
         {
-            __clayered_put(f.session(), &f.layered, &k, &v, WT_CLAYERED_PUT_INSERT);
+            WT_ITEM key = make_key();
+            WT_ITEM value = make_value();
+            __clayered_put(session(), &layered, &key, &value, WT_CLAYERED_PUT_INSERT);
 
             THEN("an insert is performed on the constituent cursor")
             {
@@ -464,7 +466,9 @@ SCENARIO("clayered_put dispatches the correct operation to the constituent curso
 
         WHEN("the op is UPDATE")
         {
-            __clayered_put(f.session(), &f.layered, &k, &v, WT_CLAYERED_PUT_UPDATE);
+            WT_ITEM key = make_key();
+            WT_ITEM value = make_value();
+            __clayered_put(session(), &layered, &key, &value, WT_CLAYERED_PUT_UPDATE);
 
             THEN("an update is performed on the constituent cursor")
             {
@@ -474,78 +478,62 @@ SCENARIO("clayered_put dispatches the correct operation to the constituent curso
     }
 }
 
-SCENARIO("clayered_put forwards the caller's value to the constituent cursor for write operations",
+SCENARIO_METHOD(layered_cursor_fixture,
+  "clayered_put forwards the caller's value to the constituent cursor for write operations",
   "[layered_cursor][put]")
 {
-    layered_cursor_fixture f;
-    f.set_follower();
-
-    constexpr std::string_view key = "key123";
-    constexpr std::string_view val = "value123";
-    WT_ITEM k{};
-    k.data = key.data();
-    k.size = key.size() + 1;
-    WT_ITEM v{};
-    v.data = val.data();
-    v.size = val.size() + 1;
-
     const auto op = GENERATE(WT_CLAYERED_PUT_INSERT, WT_CLAYERED_PUT_UPDATE);
 
     GIVEN("a follower cursor")
     {
         WHEN("a write operation is performed")
         {
-            ingest_set_value_fake.custom_fake = capture_ingest_value;
-            __clayered_put(f.session(), &f.layered, &k, &v, op);
+            WT_ITEM key = make_key();
+            WT_ITEM value = make_value();
+            __clayered_put(session(), &layered, &key, &value, op);
 
             THEN("the caller's value is forwarded to the constituent cursor")
             {
-                REQUIRE(ingest_set_value_fake_item == &v);
+                REQUIRE(ingest_set_value_item_fake.arg1_val == &value);
             }
         }
     }
 }
 
-SCENARIO("clayered_put establishes cursor position for non-insert operations",
+SCENARIO_METHOD(layered_cursor_fixture,
+  "clayered_put establishes cursor position for non-insert operations",
   "[layered_cursor][put]")
 {
-    layered_cursor_fixture f;
-
-    constexpr std::string_view key = "key123";
-    constexpr std::string_view val = "value123";
-    WT_ITEM k{};
-    k.data = key.data();
-    k.size = key.size() + 1;
-    WT_ITEM v{};
-    v.data = val.data();
-    v.size = val.size() + 1;
-
     GIVEN("a follower cursor")
     {
-        f.set_follower();
+        set_follower();
 
         WHEN("an UPDATE succeeds")
         {
-            __clayered_put(f.session(), &f.layered, &k, &v, WT_CLAYERED_PUT_UPDATE);
+            WT_ITEM key = make_key();
+            WT_ITEM value = make_value();
+            __clayered_put(session(), &layered, &key, &value, WT_CLAYERED_PUT_UPDATE);
 
             THEN("current_cursor is the ingest cursor")
             {
-                REQUIRE(f.layered.current_cursor == f.layered.ingest_cursor);
+                REQUIRE(layered.current_cursor == layered.ingest_cursor);
             }
         }
     }
 
     GIVEN("a leader cursor")
     {
-        f.set_leader();
+        set_leader();
 
         WHEN("an UPDATE succeeds")
         {
-            __clayered_put(f.session(), &f.layered, &k, &v, WT_CLAYERED_PUT_UPDATE);
+            WT_ITEM key = make_key();
+            WT_ITEM value = make_value();
+            __clayered_put(session(), &layered, &key, &value, WT_CLAYERED_PUT_UPDATE);
 
             THEN("current_cursor is the stable cursor")
             {
-                REQUIRE(f.layered.current_cursor == f.layered.stable_cursor);
+                REQUIRE(layered.current_cursor == layered.stable_cursor);
             }
         }
     }
@@ -554,44 +542,39 @@ SCENARIO("clayered_put establishes cursor position for non-insert operations",
     {
         const auto leader = GENERATE(false, true);
         if (leader)
-            f.set_leader();
+            set_leader();
         else
-            f.set_follower();
+            set_follower();
 
         WHEN("an INSERT succeeds")
         {
-            __clayered_put(f.session(), &f.layered, &k, &v, WT_CLAYERED_PUT_INSERT);
+            WT_ITEM key = make_key();
+            WT_ITEM value = make_value();
+            __clayered_put(session(), &layered, &key, &value, WT_CLAYERED_PUT_INSERT);
 
             THEN("current_cursor is not updated")
             {
-                REQUIRE(f.layered.current_cursor == nullptr);
+                REQUIRE(layered.current_cursor == nullptr);
             }
         }
     }
 }
 
-SCENARIO("clayered_put performs follower-specific setup before writing",
+SCENARIO_METHOD(layered_cursor_fixture,
+  "clayered_put performs follower-specific setup before writing",
   "[layered_cursor][put]")
 {
-    layered_cursor_fixture f;
-    f.set_follower();
-
-    constexpr std::string_view key = "key123";
-    constexpr std::string_view val = "value123";
-    WT_ITEM k{};
-    k.data = key.data();
-    k.size = key.size() + 1;
-    WT_ITEM v{};
-    v.data = val.data();
-    v.size = val.size() + 1;
-
     GIVEN("a follower cursor with the stable cursor positioned")
     {
-        F_SET(&f.stable_cursor, WT_CURSTD_KEY_SET);
+        F_SET(&stable_cursor, WT_CURSTD_KEY_SET);
+
+        _mock_session->get_mock_connection();
 
         WHEN("a write operation is issued")
         {
-            __clayered_put(f.session(), &f.layered, &k, &v, WT_CLAYERED_PUT_INSERT);
+            WT_ITEM key = make_key();
+            WT_ITEM value = make_value();
+            __clayered_put(session(), &layered, &key, &value, WT_CLAYERED_PUT_INSERT);
 
             THEN("the stable cursor is reset before the write")
             {
@@ -604,9 +587,11 @@ SCENARIO("clayered_put performs follower-specific setup before writing",
     {
         WHEN("conflict detection rejects the write")
         {
+            WT_ITEM key = make_key();
+            WT_ITEM value = make_value();
             __wt_layered_table_truncate_detect_write_conflict_fake.return_val = WT_ROLLBACK;
             const auto ret =
-              __clayered_put(f.session(), &f.layered, &k, &v, WT_CLAYERED_PUT_INSERT);
+              __clayered_put(session(), &layered, &key, &value, WT_CLAYERED_PUT_INSERT);
 
             THEN("the conflict error is returned to the caller")
             {
@@ -616,28 +601,19 @@ SCENARIO("clayered_put performs follower-specific setup before writing",
     }
 }
 
-SCENARIO("clayered_put propagates errors from the constituent write operation",
+SCENARIO_METHOD(layered_cursor_fixture,
+  "clayered_put propagates errors from the constituent write operation",
   "[layered_cursor][put]")
 {
-    layered_cursor_fixture f;
-    f.set_follower();
-
-    constexpr std::string_view key = "key123";
-    constexpr std::string_view val = "value123";
-    WT_ITEM k{};
-    k.data = key.data();
-    k.size = key.size() + 1;
-    WT_ITEM v{};
-    v.data = val.data();
-    v.size = val.size() + 1;
-
     GIVEN("a follower cursor")
     {
         WHEN("the constituent write fails")
         {
+            WT_ITEM key = make_key();
+            WT_ITEM value = make_value();
             ingest_insert_fake.return_val = WT_PANIC;
             const auto ret =
-              __clayered_put(f.session(), &f.layered, &k, &v, WT_CLAYERED_PUT_INSERT);
+              __clayered_put(session(), &layered, &key, &value, WT_CLAYERED_PUT_INSERT);
 
             THEN("the error is returned to the caller")
             {
@@ -646,7 +622,7 @@ SCENARIO("clayered_put propagates errors from the constituent write operation",
 
             AND_THEN("current_cursor is not updated")
             {
-                REQUIRE(f.layered.current_cursor == nullptr);
+                REQUIRE(layered.current_cursor == nullptr);
             }
         }
     }
