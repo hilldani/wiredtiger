@@ -34,6 +34,49 @@ struct __wti_evict_entry {
 #define WTI_EVICT_URGENT_QUEUE 2 /* Urgent queue index */
 
 /*
+ * WTI_DIRTY_INDEX --
+ *	Per-btree ring of WT_REF pointers fed from the modify path. The eviction walker
+ *	drains entries in FIFO order to supply dirty candidates without walking the tree.
+ *	Capacity is a power of two so the consumer can mask-index into the slot array.
+ */
+#define WTI_DIRTY_INDEX_MIN_CAPACITY 4096u
+#define WTI_DIRTY_INDEX_MAX_CAPACITY 262144u
+#define WTI_DIRTY_INDEX_SLOTS_PER_GB 500u
+
+/*
+ * Adaptive drain scheduling thresholds (see __evict_walk_tree). The drain is attempted on odd
+ * passes. After WTI_DRAIN_EMPTY_THRESHOLD consecutive empty drains the per-btree drain is parked
+ * (walker-only mode) and re-probed once every WTI_DRAIN_PROBE_INTERVAL passes.
+ */
+#define WTI_DRAIN_EMPTY_THRESHOLD 8u
+#define WTI_DRAIN_PROBE_INTERVAL 32u
+
+struct __wti_dirty_index {
+    /*
+     * Read-mostly: set at alloc and never modified afterwards.
+     */
+    WT_REF **slots;    /* Circular buffer of ref pointers */
+    uint32_t capacity; /* Slot count (power of two) */
+    uint32_t mask;     /* capacity - 1 */
+
+    /*
+     * head is hammered by every producer's atomic fetch-add; tail is written only by the single
+     * consumer but read by every producer for the overflow check. Without separation, the
+     * producer's exclusive acquire of head's cache line invalidates the consumer's writes to tail
+     * (and vice versa) on every iteration -- the classic multi-producer-single-consumer ring
+     * false-sharing trap.
+     *
+     * Manual padding (rather than two WT_CACHE_LINE_PAD_BEGIN/END blocks) is necessary because the
+     * macro's anonymous-union __padding member would collide if used twice. The padding bytes
+     * between head and tail guarantee they live in different cache lines regardless of struct
+     * alignment in the heap.
+     */
+    wt_shared uint64_t head; /* Next slot to be filled (monotonic, fetch-add by producers) */
+    char __pad_head_tail[WT_CACHE_LINE_ALIGNMENT - sizeof(uint64_t)];
+    wt_shared uint64_t tail; /* Next slot to drain (monotonic, advanced by the consumer) */
+};
+
+/*
  * WTI_EVICT_QUEUE --
  *	Encapsulation of an eviction candidate queue.
  */
@@ -71,6 +114,8 @@ extern int __wti_evict_page(WT_SESSION_IMPL *session, bool is_server)
   WT_GCC_FUNC_DECL_ATTRIBUTE((warn_unused_result));
 extern int __wti_evict_walk(WT_SESSION_IMPL *session, WTI_EVICT_QUEUE *queue)
   WT_GCC_FUNC_DECL_ATTRIBUTE((warn_unused_result));
+extern void __wti_dirty_index_clear_page(
+  WT_SESSION_IMPL *session, WT_BTREE *btree, WT_REF *ref, WT_PAGE *page);
 extern void __wti_evict_queue_clear_page(WT_SESSION_IMPL *session, WT_REF *ref);
 extern void __wti_evict_queue_clear_page_locked(
   WT_SESSION_IMPL *session, WT_REF *ref, bool exclude_urgent);

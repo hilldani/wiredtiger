@@ -36,6 +36,9 @@ __btree_clear(WT_SESSION_IMPL *session)
     if (btree->collator_owned && btree->collator->terminate != NULL)
         WT_TRET(btree->collator->terminate(btree->collator, &session->iface));
 
+    /* Free the per-btree dirty-page index (push-model eviction). */
+    __wt_dirty_index_destroy(session, btree);
+
     /* Destroy locks. */
     __wt_rwlock_destroy(session, &btree->ovfl_lock);
     __wt_spin_destroy(session, &btree->flush_lock);
@@ -331,6 +334,12 @@ __wt_btree_open(WT_SESSION_IMPL *session, const char *op_cfg[])
     /* A btree cannot be both an ingest btree and a stable btree. */
     WT_ASSERT(session,
       !F_ISSET(btree, WT_BTREE_GARBAGE_COLLECT) || !F_ISSET(btree, WT_BTREE_DISAGGREGATED));
+
+    /*
+     * Allocate the per-btree dirty-page index (push-model eviction candidate source). Failure is
+     * non-fatal -- the tree simply falls back to walker-only discovery.
+     */
+    WT_ERR(__wt_dirty_index_alloc(session, btree));
 
     if (0) {
 err:

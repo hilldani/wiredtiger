@@ -831,6 +831,13 @@ connection_runtime_config = [
         the \c cache_size and has to be greater than its counterpart \c eviction_dirty_target.
         This setting only alters behavior if it is lower than eviction_trigger''',
         min=1, max='10TB'),
+    Config('eviction_dirty_index_enabled', 'true', r'''
+        if true, allocate a per-btree dirty-page index that captures page references at
+        modify-time and supplies them to the eviction queue, alongside the tree walker. The drain
+        runs on alternating eviction passes when dirty/updates pressure is active and falls back
+        to the walker when the ring is empty or clean eviction is the bottleneck. Disable to fall
+        back to walker-only candidate discovery (no per-btree ring is allocated)''',
+        type='boolean'),
     Config('eviction_target', '80', r'''
         perform eviction in worker threads when the cache contains at least this much content. It
         is a percentage of the cache size if the value is within the range of 10 to 100 or

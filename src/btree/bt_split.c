@@ -635,6 +635,14 @@ __split_parent_discard_ref(WT_SESSION_IMPL *session, WT_REF *ref, WT_PAGE *paren
     WT_ASSERT(session, !F_ISSET_ATOMIC_8(ref, WT_REF_FLAG_PREFETCH));
 
     /*
+     * Remove this ref from the btree's dirty-index ring before freeing. If the ref's
+     * dirty_index_slot is set, CAS the ring slot to NULL so the drain path cannot dereference a
+     * pointer that is about to be freed. Must happen before WT_REF_SET_STATE so the ref is still
+     * addressable (dirty_index_slot is a field on the ref itself).
+     */
+    __wt_dirty_index_clear_ref(session, S2BT(session), ref);
+
+    /*
      * Set the WT_REF state. It may be possible to immediately free the WT_REF, so this is our last
      * chance.
      */
@@ -2510,6 +2518,12 @@ __wt_split_rewrite(WT_SESSION_IMPL *session, WT_REF *ref, WT_MULTI *multi, bool 
     WT_RET(__wt_calloc_one(session, &new));
     new->ref_recno = ref->ref_recno;
 
+    /*
+     * The producer (__wt_dirty_index_insert) skips refs without WT_REF_FLAG_LEAF, so this scratch
+     * ref will not be inserted into the ring during the cursor operations performed by
+     * __split_multi_inmem. The drain cannot safely dereference scratch refs after they are freed,
+     * which is exactly why we must keep them out of the ring.
+     */
     WT_ERR(__split_multi_inmem(session, page, multi, new));
 
     /*

@@ -56,12 +56,13 @@ struct __wt_evict {
      * Eviction threshold percentages use double type to allow for specifying percentages less than
      * one.
      */
-    wt_shared double eviction_dirty_target;    /* Percent to allow dirty */
-    wt_shared double eviction_dirty_trigger;   /* Percent to trigger dirty eviction */
-    double eviction_trigger;                   /* Percent to trigger eviction */
-    double eviction_target;                    /* Percent to end eviction */
-    double eviction_updates_target;            /* Percent to allow for updates */
-    wt_shared double eviction_updates_trigger; /* Percent of updates to trigger eviction */
+    wt_shared bool eviction_dirty_index_enabled; /* Per-btree dirty-index ring + drain enabled */
+    wt_shared double eviction_dirty_target;      /* Percent to allow dirty */
+    wt_shared double eviction_dirty_trigger;     /* Percent to trigger dirty eviction */
+    double eviction_trigger;                     /* Percent to trigger eviction */
+    double eviction_target;                      /* Percent to end eviction */
+    double eviction_updates_target;              /* Percent to allow for updates */
+    wt_shared double eviction_updates_trigger;   /* Percent of updates to trigger eviction */
 
     double eviction_checkpoint_target; /* Percent to reduce dirty to during checkpoint scrubs */
     wt_shared double eviction_scrub_target; /* Current scrub target */
@@ -164,6 +165,8 @@ struct __wt_evict {
 
 extern bool __wt_evict_page_urgent(WT_SESSION_IMPL *session, WT_REF *ref)
   WT_GCC_FUNC_DECL_ATTRIBUTE((warn_unused_result));
+extern int __wt_dirty_index_alloc(WT_SESSION_IMPL *session, WT_BTREE *btree)
+  WT_GCC_FUNC_DECL_ATTRIBUTE((warn_unused_result));
 extern int __wt_evict(WT_SESSION_IMPL *session, WT_REF *ref, WT_REF_STATE previous_state,
   uint32_t flags) WT_GCC_FUNC_DECL_ATTRIBUTE((warn_unused_result));
 extern int __wt_evict_config(WT_SESSION_IMPL *session, const char *cfg[], bool reconfig)
@@ -182,6 +185,9 @@ extern int __wt_evict_threads_destroy(WT_SESSION_IMPL *session)
   WT_GCC_FUNC_DECL_ATTRIBUTE((warn_unused_result));
 extern int __wt_verbose_dump_cache(WT_SESSION_IMPL *session)
   WT_GCC_FUNC_DECL_ATTRIBUTE((warn_unused_result));
+extern void __wt_dirty_index_clear_ref(WT_SESSION_IMPL *session, WT_BTREE *btree, WT_REF *ref);
+extern void __wt_dirty_index_destroy(WT_SESSION_IMPL *session, WT_BTREE *btree);
+extern void __wt_dirty_index_insert(WT_SESSION_IMPL *session, WT_BTREE *btree, WT_REF *ref);
 extern void __wt_evict_cache_stat_walk(WT_SESSION_IMPL *session);
 extern void __wt_evict_file_exclusive_off(WT_SESSION_IMPL *session);
 extern void __wt_evict_priority_clear(WT_SESSION_IMPL *session);

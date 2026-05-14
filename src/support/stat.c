@@ -65,6 +65,14 @@ static const char *const __stats_dsrc_desc[] = {
   "cache: checkpoint blocked page eviction",
   "cache: checkpoint of history store file blocked non-history store page eviction",
   "cache: data source pages selected for eviction unable to be evicted",
+  "cache: dirty index drain skipped due to active checkpoint",
+  "cache: dirty index inserts",
+  "cache: dirty index inserts dropped due to full ring",
+  "cache: dirty index inserts failed due to race",
+  "cache: dirty index slots examined by drain",
+  "cache: dirty index slots queued to eviction by drain",
+  "cache: dirty index slots skipped by drain due to candidacy filter",
+  "cache: dirty index slots skipped by drain due to stale ref",
   "cache: dirty internal page cannot be evicted in disaggregated storage",
   "cache: eviction gave up due to detecting a disk value without a timestamp behind the last "
   "update on the chain",
@@ -533,6 +541,14 @@ __wt_stat_dsrc_clear_single(WT_DSRC_STATS *stats)
     stats->cache_eviction_blocked_checkpoint = 0;
     stats->cache_eviction_blocked_checkpoint_hs = 0;
     stats->eviction_fail = 0;
+    stats->cache_eviction_dirty_index_drain_skipped_checkpoint = 0;
+    stats->cache_eviction_dirty_index_insert = 0;
+    stats->cache_eviction_dirty_index_insert_ring_full = 0;
+    stats->cache_eviction_dirty_index_insert_contended = 0;
+    stats->cache_eviction_dirty_index_drain_scanned = 0;
+    stats->cache_eviction_dirty_index_drain_queued = 0;
+    stats->cache_eviction_dirty_index_drain_filtered = 0;
+    stats->cache_eviction_dirty_index_drain_stale = 0;
     stats->cache_eviction_blocked_disagg_dirty_internal_page = 0;
     stats->cache_eviction_blocked_no_ts_checkpoint_race_1 = 0;
     stats->cache_eviction_blocked_no_ts_checkpoint_race_2 = 0;
@@ -964,6 +980,18 @@ __wt_stat_dsrc_aggregate_single(WT_DSRC_STATS *from, WT_DSRC_STATS *to)
     to->cache_eviction_blocked_checkpoint += from->cache_eviction_blocked_checkpoint;
     to->cache_eviction_blocked_checkpoint_hs += from->cache_eviction_blocked_checkpoint_hs;
     to->eviction_fail += from->eviction_fail;
+    to->cache_eviction_dirty_index_drain_skipped_checkpoint +=
+      from->cache_eviction_dirty_index_drain_skipped_checkpoint;
+    to->cache_eviction_dirty_index_insert += from->cache_eviction_dirty_index_insert;
+    to->cache_eviction_dirty_index_insert_ring_full +=
+      from->cache_eviction_dirty_index_insert_ring_full;
+    to->cache_eviction_dirty_index_insert_contended +=
+      from->cache_eviction_dirty_index_insert_contended;
+    to->cache_eviction_dirty_index_drain_scanned += from->cache_eviction_dirty_index_drain_scanned;
+    to->cache_eviction_dirty_index_drain_queued += from->cache_eviction_dirty_index_drain_queued;
+    to->cache_eviction_dirty_index_drain_filtered +=
+      from->cache_eviction_dirty_index_drain_filtered;
+    to->cache_eviction_dirty_index_drain_stale += from->cache_eviction_dirty_index_drain_stale;
     to->cache_eviction_blocked_disagg_dirty_internal_page +=
       from->cache_eviction_blocked_disagg_dirty_internal_page;
     to->cache_eviction_blocked_no_ts_checkpoint_race_1 +=
@@ -1422,6 +1450,22 @@ __wt_stat_dsrc_aggregate(WT_DSRC_STATS **from, WT_DSRC_STATS *to)
     to->cache_eviction_blocked_checkpoint_hs +=
       WT_STAT_DSRC_READ(from, cache_eviction_blocked_checkpoint_hs);
     to->eviction_fail += WT_STAT_DSRC_READ(from, eviction_fail);
+    to->cache_eviction_dirty_index_drain_skipped_checkpoint +=
+      WT_STAT_DSRC_READ(from, cache_eviction_dirty_index_drain_skipped_checkpoint);
+    to->cache_eviction_dirty_index_insert +=
+      WT_STAT_DSRC_READ(from, cache_eviction_dirty_index_insert);
+    to->cache_eviction_dirty_index_insert_ring_full +=
+      WT_STAT_DSRC_READ(from, cache_eviction_dirty_index_insert_ring_full);
+    to->cache_eviction_dirty_index_insert_contended +=
+      WT_STAT_DSRC_READ(from, cache_eviction_dirty_index_insert_contended);
+    to->cache_eviction_dirty_index_drain_scanned +=
+      WT_STAT_DSRC_READ(from, cache_eviction_dirty_index_drain_scanned);
+    to->cache_eviction_dirty_index_drain_queued +=
+      WT_STAT_DSRC_READ(from, cache_eviction_dirty_index_drain_queued);
+    to->cache_eviction_dirty_index_drain_filtered +=
+      WT_STAT_DSRC_READ(from, cache_eviction_dirty_index_drain_filtered);
+    to->cache_eviction_dirty_index_drain_stale +=
+      WT_STAT_DSRC_READ(from, cache_eviction_dirty_index_drain_stale);
     to->cache_eviction_blocked_disagg_dirty_internal_page +=
       WT_STAT_DSRC_READ(from, cache_eviction_blocked_disagg_dirty_internal_page);
     to->cache_eviction_blocked_no_ts_checkpoint_race_1 +=
@@ -1986,6 +2030,14 @@ static const char *const __stats_connection_desc[] = {
   "cache: checkpoint blocked page eviction",
   "cache: checkpoint of history store file blocked non-history store page eviction",
   "cache: dirty bytes belonging to the history store table in the cache",
+  "cache: dirty index drain skipped due to active checkpoint",
+  "cache: dirty index inserts",
+  "cache: dirty index inserts dropped due to full ring",
+  "cache: dirty index inserts failed due to race",
+  "cache: dirty index slots examined by drain",
+  "cache: dirty index slots queued to eviction by drain",
+  "cache: dirty index slots skipped by drain due to candidacy filter",
+  "cache: dirty index slots skipped by drain due to stale ref",
   "cache: dirty internal page cannot be evicted in disaggregated storage",
   "cache: evict page attempts by eviction server",
   "cache: evict page attempts by eviction worker threads",
@@ -3064,6 +3116,14 @@ __wt_stat_connection_clear_single(WT_CONNECTION_STATS *stats)
     stats->cache_eviction_blocked_checkpoint = 0;
     stats->cache_eviction_blocked_checkpoint_hs = 0;
     /* not clearing cache_bytes_hs_dirty */
+    stats->cache_eviction_dirty_index_drain_skipped_checkpoint = 0;
+    stats->cache_eviction_dirty_index_insert = 0;
+    stats->cache_eviction_dirty_index_insert_ring_full = 0;
+    stats->cache_eviction_dirty_index_insert_contended = 0;
+    stats->cache_eviction_dirty_index_drain_scanned = 0;
+    stats->cache_eviction_dirty_index_drain_queued = 0;
+    stats->cache_eviction_dirty_index_drain_filtered = 0;
+    stats->cache_eviction_dirty_index_drain_stale = 0;
     stats->cache_eviction_blocked_disagg_dirty_internal_page = 0;
     stats->eviction_server_evict_attempt = 0;
     stats->eviction_worker_evict_attempt = 0;
@@ -4111,6 +4171,22 @@ __wt_stat_connection_aggregate(WT_CONNECTION_STATS **from, WT_CONNECTION_STATS *
     to->cache_eviction_blocked_checkpoint_hs +=
       WT_STAT_CONN_READ(from, cache_eviction_blocked_checkpoint_hs);
     to->cache_bytes_hs_dirty += WT_STAT_CONN_READ(from, cache_bytes_hs_dirty);
+    to->cache_eviction_dirty_index_drain_skipped_checkpoint +=
+      WT_STAT_CONN_READ(from, cache_eviction_dirty_index_drain_skipped_checkpoint);
+    to->cache_eviction_dirty_index_insert +=
+      WT_STAT_CONN_READ(from, cache_eviction_dirty_index_insert);
+    to->cache_eviction_dirty_index_insert_ring_full +=
+      WT_STAT_CONN_READ(from, cache_eviction_dirty_index_insert_ring_full);
+    to->cache_eviction_dirty_index_insert_contended +=
+      WT_STAT_CONN_READ(from, cache_eviction_dirty_index_insert_contended);
+    to->cache_eviction_dirty_index_drain_scanned +=
+      WT_STAT_CONN_READ(from, cache_eviction_dirty_index_drain_scanned);
+    to->cache_eviction_dirty_index_drain_queued +=
+      WT_STAT_CONN_READ(from, cache_eviction_dirty_index_drain_queued);
+    to->cache_eviction_dirty_index_drain_filtered +=
+      WT_STAT_CONN_READ(from, cache_eviction_dirty_index_drain_filtered);
+    to->cache_eviction_dirty_index_drain_stale +=
+      WT_STAT_CONN_READ(from, cache_eviction_dirty_index_drain_stale);
     to->cache_eviction_blocked_disagg_dirty_internal_page +=
       WT_STAT_CONN_READ(from, cache_eviction_blocked_disagg_dirty_internal_page);
     to->eviction_server_evict_attempt += WT_STAT_CONN_READ(from, eviction_server_evict_attempt);

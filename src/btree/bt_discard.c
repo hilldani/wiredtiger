@@ -379,6 +379,9 @@ __wti_free_ref(WT_SESSION_IMPL *session, WT_REF *ref, int page_type, bool free_p
     /* Free any backing fast-truncate memory. */
     __wt_free(session, ref->page_del);
 
+    /* Remove from the dirty-index ring before the memory is poisoned by overwrite-and-free. */
+    __wt_dirty_index_clear_ref(session, S2BT(session), ref);
+
     __wt_overwrite_and_free_len(session, ref, WT_REF_CLEAR_SIZE);
 }
 

@@ -317,6 +317,13 @@ __wt_row_modify(WT_CURSOR_BTREE *cbt, const WT_ITEM *key, const WT_ITEM *value,
         WT_ERR(__wt_txn_op_set_key(session, key));
     }
 
+    /*
+     * Push-model dirty-index: announce this dirty leaf to the per-btree ring so eviction can drain
+     * it without walking the tree. The producer deduplicates on the page's dirty_index_slot back-
+     * pointer (non-zero means "already in the ring"), so this call is cheap on the hot modify path.
+     */
+    __wt_dirty_index_insert(session, S2BT(session), cbt->ref);
+
     if (0) {
 err:
         /*

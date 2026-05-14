@@ -78,6 +78,9 @@ __evict_validate_config(WT_SESSION_IMPL *session, const char *cfg[])
     WT_RET(__evict_config_abs_to_pct(
       session, &(evict->eviction_trigger), "eviction trigger", conn->cache_size, shared));
 
+    WT_RET(__wt_config_gets(session, cfg, "eviction_dirty_index_enabled", &cval));
+    evict->eviction_dirty_index_enabled = (cval.val != 0);
+
     WT_RET(__wt_config_gets(session, cfg, "eviction_dirty_target", &cval));
     evict->eviction_dirty_target = (double)cval.val;
     WT_RET(__evict_config_abs_to_pct(
