@@ -596,3 +596,199 @@ class test_layered105(wttest.WiredTigerTestCase):
         self.session_follow.rollback_transaction()
 
         self.teardown_follower_and_checkpoint_leader()
+
+    def setup_unstable_onpage_modify_precondition(self):
+        """
+        Variant where the on-disk cell is NOT GC-eligible (its start
+        timestamp is strictly greater than prune_timestamp). With only
+        the first attempt at the WT-17453 fix in place (keep
+        upd_select->upd whenever the chain bottom is a MODIFY,
+        regardless of whether the on-disk cell is GC-eligible),
+        reconciliation writes the MODIFY-reconstructed value to the
+        new disk image at the MODIFY's time window (ts=20) -- silently
+        bumping the on-disk start_ts from 15 to 20 and erasing the
+        ts=15..19 visibility window of V0. The refined guard checks
+        onpage_gc_eligible: when the on-disk cell is not yet
+        GC-eligible, clear upd_select->upd as the original code did
+        so rec_row.c keeps the on-disk cell unchanged (the GC drop
+        does not fire since the cell is not eligible).
+
+        Timeline:
+          ts=15: V0 inserted on follower (and leader).
+          ts=15: follower force-evicts -> on-disk V0@15.
+          stable_timestamp -> 11.
+          ts=20: MODIFY(D1) on follower (and leader).
+          ts=30: STANDARD(V2) on follower (and leader).
+          leader checkpoint at stable=11 (does NOT capture V0@15
+            because 15 > 11; the checkpoint exists to set the
+            follower's last_checkpoint_timestamp = 11 and therefore
+            prune_timestamp = 11).
+          oldest_timestamp -> 11.
+          follower force-evicts -> reconciliation walks the chain
+            with on-disk V0@15 (start_ts=15 > prune_ts=11, NOT
+            GC-eligible).
+        """
+        self.create_follower()
+        self.session.create(self.uri, self.create_config)
+        self.session_follow.create(self.uri, self.create_config)
+
+        v0 = 'value0' + ('.' * 100)
+        v2 = 'value3' + ('.' * 100)
+
+        # Step 1: insert K=1 at ts=15 on both sides. 15 will be GREATER
+        # than the prune_timestamp we configure below, so V0's on-disk
+        # cell will not be GC-eligible during reconciliation.
+        c = self.session.open_cursor(self.uri)
+        self.session.begin_transaction()
+        c[1] = v0
+        self.session.commit_transaction(
+            f'commit_timestamp={self.timestamp_str(15)}')
+        c.close()
+
+        cf = self.session_follow.open_cursor(self.uri)
+        self.session_follow.begin_transaction()
+        cf[1] = v0
+        self.session_follow.commit_transaction(
+            f'commit_timestamp={self.timestamp_str(15)}')
+        cf.close()
+
+        # Step 2: bake V0@15 onto the follower's ingest disk image.
+        self.force_evict(self.conn_follow, self.uri, 1)
+
+        # Step 2b: pin stable_timestamp at 11. This is below the ts=15
+        # commit (stable_ts can be set to any value that doesn't move
+        # backwards) and must be in place before the ts=20 / ts=30
+        # writes so the leader checkpoint below picks up
+        # checkpoint_timestamp = 11.
+        self.conn.set_timestamp(
+            f'stable_timestamp={self.timestamp_str(11)}')
+        self.conn_follow.set_timestamp(
+            f'stable_timestamp={self.timestamp_str(11)}')
+
+        # Step 3: modify K at ts=20 on both sides. v0[6] == '.', so the
+        # post-modify value is 'value0' + 'X' + ('.' * 99). v0 is > 64
+        # bytes so the MODIFY is preserved (not collapsed).
+        mods = [wiredtiger.Modify('X', 6, 1)]
+
+        c = self.session.open_cursor(self.uri)
+        self.session.begin_transaction()
+        c.set_key(1)
+        self.assertEqual(c.modify(mods), 0)
+        self.session.commit_transaction(
+            f'commit_timestamp={self.timestamp_str(20)}')
+        c.close()
+
+        cf = self.session_follow.open_cursor(self.uri)
+        self.session_follow.begin_transaction()
+        cf.set_key(1)
+        self.assertEqual(cf.modify(mods), 0)
+        self.session_follow.commit_transaction(
+            f'commit_timestamp={self.timestamp_str(20)}')
+        cf.close()
+
+        # Step 4: full update at ts=30 on both sides. Ingest chain
+        # becomes [STANDARD(V2) -> MODIFY(D1) -> NULL].
+        c = self.session.open_cursor(self.uri)
+        self.session.begin_transaction()
+        c[1] = v2
+        self.session.commit_transaction(
+            f'commit_timestamp={self.timestamp_str(30)}')
+        c.close()
+
+        cf = self.session_follow.open_cursor(self.uri)
+        self.session_follow.begin_transaction()
+        cf[1] = v2
+        self.session_follow.commit_transaction(
+            f'commit_timestamp={self.timestamp_str(30)}')
+        cf.close()
+
+        # Step 5: leader checkpoint at stable=11. Captures nothing for
+        # K=1 (V0@15 is above stable=11), but sets the follower's
+        # last_checkpoint_timestamp = 11 on pickup.
+        self.session.checkpoint()
+        self.disagg_advance_checkpoint(self.conn_follow)
+
+        # Step 6: oldest = 11.
+        self.conn_follow.set_timestamp(
+            f'oldest_timestamp={self.timestamp_str(11)}')
+
+        # Step 7: force eviction. Reconciliation walks the ingest chain
+        # for K=1 with first_pruned_update=NULL and
+        # found_last_upd_to_keep=false (nothing in the chain is
+        # prunable or visible_all). vpack->tw.start_ts = 15,
+        # prune_ts = 11, so the on-disk cell is NOT GC-eligible
+        # (WT_REC_CAN_PRUNE_UPD returns false for the cell).
+        self.force_evict(self.conn_follow, self.uri, 1)
+
+        # Expected value at read_timestamp=20 (or any ts in [20, 29])
+        # when MODIFY@20 is correctly reconstructed against V0@15.
+        return v0, 'value0' + 'X' + ('.' * 99), v2
+
+    def test_modify_with_unstable_onpage_value(self):
+        """
+        Variant where the on-disk cell is NOT GC-eligible during
+        reconciliation. Without WT-17453's refinement
+        (onpage_gc_eligible guard) but with the earlier "MODIFY chain
+        bottom" guard, reconciliation writes the MODIFY-reconstructed
+        value to the new disk image at the MODIFY's time window (ts=20)
+        and supd_restore truncates the saved chain to drop the on-page
+        upd and everything below it (only STANDARD@30 survives). The
+        original V0 cell at ts=15 is silently overwritten: V0's
+        visibility window [15, 19] is gone, and a read at
+        read_timestamp=15 (which should return V0) returns
+        WT_NOTFOUND.
+
+        With the refined guard, when the on-disk cell is not yet
+        GC-eligible, upd_select->upd is cleared and rec_row.c keeps
+        the on-page cell unchanged (V0@15 with its original tw).
+        supd_restore preserves the full chain
+        [STANDARD@30, MODIFY@20]. Reads at every timestamp resolve
+        correctly:
+          ts=14: NOTFOUND (V0 not yet committed)
+          ts=15-19: V0 (chain not visible; falls back to on-page V0@15)
+          ts=20-29: V0+delta (MODIFY visible; reconstructs against
+                              on-page V0@15)
+          ts=30+: V2 (STANDARD visible on the chain)
+        """
+        v0, modified, v2 = self.setup_unstable_onpage_modify_precondition()
+
+        # read_ts=15 -- V0's commit timestamp. The buggy first-fix
+        # rewrites the on-disk start_ts from 15 to 20, erasing this
+        # visibility window. With the refined guard the on-page cell
+        # is untouched.
+        self.session_follow.begin_transaction(
+            f'read_timestamp={self.timestamp_str(15)}')
+        cf = self.session_follow.open_cursor(self.ingest_uri)
+        cf.set_key(1)
+        self.assertEqual(
+            cf.search(), 0,
+            'read_ts=15 returned WT_NOTFOUND: on-disk V0@15 was '
+            'overwritten during reconciliation. Reconcile wrote the '
+            'MODIFY-reconstructed value at the MODIFY\'s ts=20, so '
+            'V0\'s [15, 19] visibility window is gone.')
+        self.assertEqual(cf.get_value(), v0)
+        cf.close()
+        self.session_follow.rollback_transaction()
+
+        # read_ts=25 -- MODIFY visible, STANDARD not. Reconstructed
+        # value should equal modified.
+        self.session_follow.begin_transaction(
+            f'read_timestamp={self.timestamp_str(25)}')
+        cf = self.session_follow.open_cursor(self.ingest_uri)
+        cf.set_key(1)
+        self.assertEqual(cf.search(), 0)
+        self.assertEqual(cf.get_value(), modified)
+        cf.close()
+        self.session_follow.rollback_transaction()
+
+        # read_ts=30 -- STANDARD visible.
+        self.session_follow.begin_transaction(
+            f'read_timestamp={self.timestamp_str(30)}')
+        cf = self.session_follow.open_cursor(self.ingest_uri)
+        cf.set_key(1)
+        self.assertEqual(cf.search(), 0)
+        self.assertEqual(cf.get_value(), v2)
+        cf.close()
+        self.session_follow.rollback_transaction()
+
+        self.teardown_follower_and_checkpoint_leader()
