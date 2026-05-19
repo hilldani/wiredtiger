@@ -1273,17 +1273,18 @@ __rec_upd_select_inmem(WT_SESSION_IMPL *session, WTI_RECONCILE *r, WT_CELL_UNPAC
          * and the dependent MODIFY survives in the restored update chain with the on-page value
          * still available as its reconstruction base.
          */
-        WT_UPDATE *last_non_aborted = NULL;
-        for (WT_UPDATE *u = first_upd; u != NULL; u = u->next) {
-            if (u->txnid == WT_TXN_ABORTED)
-                continue;
-            last_non_aborted = u;
-        }
         bool onpage_gc_eligible = WT_TIME_WINDOW_HAS_STOP(&vpack->tw) ?
           WT_REC_CAN_PRUNE_UPD(vpack->tw.stop_txn, vpack->tw.durable_stop_ts, r) :
           WT_REC_CAN_PRUNE_UPD(vpack->tw.start_txn, vpack->tw.durable_start_ts, r);
-        if (last_non_aborted == NULL || last_non_aborted->type != WT_UPDATE_MODIFY ||
-          !onpage_gc_eligible) {
+        WT_UPDATE *last_non_aborted = NULL;
+        if (onpage_gc_eligible) {
+            for (WT_UPDATE *u = first_upd; u != NULL; u = u->next) {
+                if (u->txnid == WT_TXN_ABORTED)
+                    continue;
+                last_non_aborted = u;
+            }
+        }
+        if (last_non_aborted == NULL || last_non_aborted->type != WT_UPDATE_MODIFY) {
             *has_newer_updatesp |= (upd_select->upd != NULL);
             upd_select->upd = NULL;
         }
