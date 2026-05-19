@@ -1,0 +1,20 @@
+{
+  "name": "WiredTiger",
+  "build": {
+    "dockerfile": "../Dockerfile",
+    "context": ".."
+  },
+  "remoteUser": "wiredtiger",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "llvm-vs-code-extensions.vscode-clangd",
+        "ms-vscode.cmake-tools",
+        "ms-vscode.cpptools"
+      ],
+      "settings": {
+        "C_Cpp.intelliSenseEngine": "disabled"
+      }
+    }
+  }
+}

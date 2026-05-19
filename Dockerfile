@@ -11,6 +11,7 @@ RUN apt-get update && \
     clang=1:18.0-59~exp2 \
     clang-format=1:18.0-59~exp2 \
     clang-tidy=1:18.0-59~exp2 \
+    clangd=1:18.0-59~exp2 \
     cmake=3.28.3-1build7 \
     curl=8.5.0-2ubuntu10.9 \
     diffutils=1:3.10-1build1 \
@@ -42,7 +43,7 @@ RUN apt-get update && \
     zlib1g-dev=1:1.3.dfsg-3.1ubuntu2.1 \
     && rm -rf /var/lib/apt/lists/*
 
-RUN useradd -m wiredtiger
+RUN useradd -m -s /bin/bash wiredtiger
 USER wiredtiger
 
 RUN python3 -m venv /home/wiredtiger/.venv
