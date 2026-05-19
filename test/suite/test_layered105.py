@@ -280,3 +280,319 @@ class test_layered105(wttest.WiredTigerTestCase):
         self.session_follow.rollback_transaction()
 
         self.teardown_follower_and_checkpoint_leader()
+
+    def setup_multikey_orphan_modify_precondition(self, num_keys, target_key):
+        """
+        Multi-key variant of setup_orphan_modify_precondition.
+
+        Inserts K=1..num_keys at ts=10 so all keys share a single leaf
+        page on the follower's ingest btree, then puts the
+        [STANDARD -> MODIFY -> NULL] chain on only target_key. After
+        force-eviction, without the WT-17453 fix the reconciler hits
+        the WT_REC_HAS_ON_DISK && !found_last_upd_to_keep &&
+        !first_pruned_update branch for target_key only, clears
+        upd_select->upd, and the GARBAGE_COLLECT path in rec_row.c
+        drops target_key's row from the rebuilt pg_row. Neighbor rows
+        K != target_key have no in-memory chain, so the same branch
+        does not fire for them and their cells survive in pg_row.
+
+        With target_key absent from pg_row but its chain restored on
+        the INSERT list via supd_restore, cursor.search(target_key)
+        on the rebuilt page lands cbt->slot on an adjacent neighbor in
+        pg_row (binary search returns the nearest slot, not
+        UINT32_MAX). __wt_modify_reconstruct_from_upd_list reads
+        &page->pg_row[cbt->slot] for the on-page base -- yielding the
+        neighbor's value with target_key's MODIFY delta applied. This
+        is the SERVER-121340 cross-key signature ("intact valid
+        neighboring document at the wrong rid").
+
+        Returns the expected value when target_key's MODIFY is
+        correctly reconstructed against target_key's own on-disk value.
+        """
+        self.create_follower()
+
+        # leaf_page_max=64KB keeps all num_keys on one page; the
+        # SERVER-121340 signature requires the target key and its
+        # neighbors to share the same pg_row.
+        multikey_create_config = self.create_config + ',leaf_page_max=64KB'
+        self.session.create(self.uri, multikey_create_config)
+        self.session_follow.create(self.uri, multikey_create_config)
+
+        def initial_value(k):
+            # Owner tag at offset 0..4 ('V_K' + 2-digit key) encodes
+            # the key identity so cross-key contamination is visible
+            # from get_value(). Length > 64 bytes prevents
+            # __cursor_chain_needs_full_upd from auto-promoting the
+            # MODIFY to a STANDARD (bt_cursor.c). Byte at offset 6
+            # is '.' for every key, so a single Modify('X', 6, 1)
+            # produces a deterministic post-image regardless of which
+            # neighbor's value the bug applies it to.
+            return f'V_K{k:02d}_' + ('.' * 100)
+
+        def neighbor_v11(k):
+            # Intermediate value at ts=11 (prunable, will trigger the
+            # prune branch in __rec_upd_select_inmem to set
+            # found_last_upd_to_keep=true).
+            return f'V_K{k:02d}A' + ('.' * 100)
+
+        def neighbor_v20(k):
+            # Latest value at ts=20 (non-prunable, will be selected
+            # as upd_select->upd and written to the new disk image).
+            # The owner tag at offset 0..4 ('V_K' + 2-digit key)
+            # exposes cross-key contamination -- a contaminated read
+            # of target_key would return V_K04U... or V_K06U...,
+            # NOT V_K05...
+            return f'V_K{k:02d}U' + ('.' * 100)
+
+        # Step 1a: target_key on BOTH leader and follower at ts=10.
+        c = self.session.open_cursor(self.uri)
+        self.session.begin_transaction()
+        c[target_key] = initial_value(target_key)
+        self.session.commit_transaction(
+            f'commit_timestamp={self.timestamp_str(10)}')
+        c.close()
+
+        # Step 1b: ALL keys on the follower at ts=10 (target_key
+        # second-write is idempotent for the buggy branch -- the
+        # chain bottom is what matters). Neighbors are NOT written
+        # on the leader -- they have no stable counterpart.
+        cf = self.session_follow.open_cursor(self.uri)
+        self.session_follow.begin_transaction()
+        for k in range(1, num_keys + 1):
+            cf[k] = initial_value(k)
+        self.session_follow.commit_transaction(
+            f'commit_timestamp={self.timestamp_str(10)}')
+        cf.close()
+
+        # Step 2: bake all V_K??@10 onto the follower's ingest disk
+        # image.
+        self.force_evict(self.conn_follow, self.uri, 1)
+
+        # Step 2b: Two-entry chain on each neighbor.
+        # NOTE: stable_timestamp must NOT be set yet -- WT requires
+        # commit_ts > stable_ts, so committing at ts=11 here has to
+        # happen before stable advances to 11 below.
+        #
+        # The disagg follower pins visible_all at the layered
+        # last_checkpoint_timestamp (txn_inline.h:1008-1016): no upd
+        # is ever visible_all past the picked-up checkpoint ts.
+        # And prune_ts == checkpoint_ts (conn_layered_ingest.c:1040).
+        # So no chain entry can simultaneously be visible_all AND
+        # non-prunable on a follower -- the (prune_ts, pinned_ts]
+        # gap is closed by design.
+        #
+        # To keep neighbor cells in pg_row without the buggy branch
+        # firing, we need first_pruned_update != NULL in the chain
+        # AND upd_select->upd already set when the prune branch
+        # triggers. rec_visibility.c:1200 sets
+        # found_last_upd_to_keep = (upd_select->upd != NULL) at the
+        # moment of the prune break -- so the recipe is:
+        #
+        #   chain head: STANDARD@20 (non-prunable; sets upd_select->upd)
+        #   chain tail: STANDARD@11 (prunable, triggers break; flips
+        #                            found_last_upd_to_keep to true
+        #                            because upd_select->upd is now
+        #                            non-NULL)
+        #
+        # We build that chain by writing each neighbor TWICE without
+        # an intervening force_evict, so both entries stay in the
+        # in-memory chain. target_key is left at chain=[STANDARD@10]
+        # on disk; its modify/full at ts=20/30 below produces a chain
+        # whose oldest entry is non-prunable AND has no second
+        # prunable entry below it -- so target hits the buggy branch
+        # and its cell gets dropped.
+        cf = self.session_follow.open_cursor(self.uri)
+        self.session_follow.begin_transaction()
+        for k in range(1, num_keys + 1):
+            if k != target_key:
+                cf[k] = neighbor_v11(k)
+        self.session_follow.commit_transaction(
+            f'commit_timestamp={self.timestamp_str(11)}')
+        cf.close()
+
+        cf = self.session_follow.open_cursor(self.uri)
+        self.session_follow.begin_transaction()
+        for k in range(1, num_keys + 1):
+            if k != target_key:
+                cf[k] = neighbor_v20(k)
+        self.session_follow.commit_transaction(
+            f'commit_timestamp={self.timestamp_str(20)}')
+        cf.close()
+
+        # Step 2c: pin stable_timestamp at 11 (after the neighbor
+        # chain is built; subsequent commits must be > 11).
+        self.conn.set_timestamp(
+            f'stable_timestamp={self.timestamp_str(11)}')
+        self.conn_follow.set_timestamp(
+            f'stable_timestamp={self.timestamp_str(11)}')
+
+        # Step 3: modify target_key at ts=20 on both sides.
+        mods = [wiredtiger.Modify('X', 6, 1)]
+
+        c = self.session.open_cursor(self.uri)
+        self.session.begin_transaction()
+        c.set_key(target_key)
+        self.assertEqual(c.modify(mods), 0)
+        self.session.commit_transaction(
+            f'commit_timestamp={self.timestamp_str(20)}')
+        c.close()
+
+        cf = self.session_follow.open_cursor(self.uri)
+        self.session_follow.begin_transaction()
+        cf.set_key(target_key)
+        self.assertEqual(cf.modify(mods), 0)
+        self.session_follow.commit_transaction(
+            f'commit_timestamp={self.timestamp_str(20)}')
+        cf.close()
+
+        # Step 4: full update target_key at ts=30. Follower's ingest
+        # chain for target_key is now [STANDARD(v2) -> MODIFY(D) -> NULL].
+        v2 = f'V_K{target_key:02d}_NEW' + ('.' * 100)
+
+        c = self.session.open_cursor(self.uri)
+        self.session.begin_transaction()
+        c[target_key] = v2
+        self.session.commit_transaction(
+            f'commit_timestamp={self.timestamp_str(30)}')
+        c.close()
+
+        cf = self.session_follow.open_cursor(self.uri)
+        self.session_follow.begin_transaction()
+        cf[target_key] = v2
+        self.session_follow.commit_transaction(
+            f'commit_timestamp={self.timestamp_str(30)}')
+        cf.close()
+
+        # Step 5: leader checkpoint at stable=11 (captures target@10
+        # only) and follower pickup. This sets the follower's
+        # last_checkpoint_timestamp (and therefore both prune_ts and
+        # pinned_ts for visible_all) to 11.
+        self.session.checkpoint()
+        self.disagg_advance_checkpoint(self.conn_follow)
+
+        # Step 5b: advance oldest_timestamp to 11 on the follower
+        # (matches the existing single-key test).
+        self.conn_follow.set_timestamp(
+            f'oldest_timestamp={self.timestamp_str(11)}')
+
+        # Step 6: force-evict the ingest page. Reconcile decisions:
+        #   - target_key: chain [STANDARD@30, MODIFY@20]; on-disk @10.
+        #     Walk: STANDARD@30 (not prunable; not visible_all),
+        #     MODIFY@20 (not prunable; not visible_all). Loop ends
+        #     with found_last_upd_to_keep=false, first_pruned_update=NULL.
+        #     Buggy branch fires (rec_visibility.c:1257), clears
+        #     upd_select->upd. rec_row.c: upd==NULL,
+        #     eligible_for_gc(@10) with prune_ts=11 -> drop cell;
+        #     supd_restore lands the orphan MODIFY chain on the
+        #     INSERT list of the new page.
+        #   - neighbors: chain [STANDARD@20, STANDARD@11]; on-disk @10.
+        #     Walk: STANDARD@20 (not prunable; not visible_all)
+        #     -> upd_select->upd = STANDARD@20.
+        #     STANDARD@11: prune check 11 <= prune_ts=11 TRUE,
+        #     first_pruned_update = STANDARD@11,
+        #     found_last_upd_to_keep = (upd_select->upd != NULL) = TRUE,
+        #     break.
+        #     Buggy branch DOES NOT fire (found_last_upd_to_keep=true).
+        #     rec_row.c: upd = STANDARD@20, write to new disk image.
+        #     Cell preserved with the neighbor_v20 value.
+        self.force_evict(self.conn_follow, self.uri, target_key)
+
+        # Expected at read_ts=25 if the read correctly reconstructs
+        # MODIFY@20 against target_key's OWN initial value:
+        # initial_value(target_key) with byte 6 = 'X'.
+        initial = initial_value(target_key)
+        return initial[:6] + 'X' + initial[7:]
+
+    def test_modify_multikey_no_cross_key_contamination(self):
+        """
+        Populated-page variant of the orphan-MODIFY bug -- the silent
+        cross-key contamination signature from SERVER-121340.
+
+        The other two tests reduce the page to entries == 0 and trip
+        either the slot-bounds assertion (cursor.next) or a NULL
+        pg_row deref (cursor.search). This test keeps neighbors on
+        the page so cbt->slot is well within bounds and the slot
+        assertion passes -- making the defect SILENT: the
+        reconstruction reads the wrong key's value as the on-page
+        base, applies target_key's MODIFY delta, and returns a value
+        whose owner tag belongs to a neighbor.
+
+        Before WT-17453: cf.get_value() returns 'V_K0[4|6]_X' + dots
+        (a neighbor's tag with target_key's delta), failing the
+        owner-tag assertion.
+        With WT-17453: target_key's on-page cell is preserved,
+        reconstruction reads target_key's own value, owner tag and
+        full value match.
+        """
+        target_key = 5
+        num_keys = 10
+        expected = self.setup_multikey_orphan_modify_precondition(
+            num_keys=num_keys, target_key=target_key)
+
+        self.session_follow.begin_transaction(
+            f'read_timestamp={self.timestamp_str(25)}')
+        cf = self.session_follow.open_cursor(self.ingest_uri)
+
+        # Probe a few neighbors first to confirm the page is in the
+        # multi-key state the test requires. If neighbors return
+        # WT_NOTFOUND, the eviction reconcile collapsed the page to
+        # entries==0 and the test is going to fail in the
+        # crash/null-deref variant instead of demonstrating the
+        # silent variant -- fail loudly with a diagnostic so the
+        # setup can be corrected, rather than letting the assertion
+        # on target_key crash the process.
+        neighbors_found = []
+        for k in (target_key - 1, target_key + 1,
+                  target_key - 2, target_key + 2):
+            if k < 1 or k > num_keys:
+                continue
+            cf.set_key(k)
+            ret = cf.search()
+            if ret == 0:
+                neighbors_found.append((k, cf.get_value()[:8]))
+            cf.reset()
+        self.assertTrue(
+            len(neighbors_found) >= 1,
+            f'Multi-key precondition not established: no neighbor of '
+            f'target_key={target_key} survives on the rebuilt ingest '
+            f'page (page appears pruned to entries==0). Cannot '
+            f'demonstrate the silent cross-key variant from this '
+            f'state. Setup needs adjustment.')
+
+        # Read target_key. With the bug present, cbt->slot is set by
+        # row_srch to a slot in pg_row that belongs to a NEIGHBOR
+        # (target_key's own row was dropped during reconcile),
+        # __wt_modify_reconstruct_from_upd_list falls through to
+        # __wt_value_return_buf which reads &page->pg_row[cbt->slot]
+        # (a neighbor's on-page value), and applies target_key's
+        # MODIFY delta on top -- returning a value whose owner tag
+        # belongs to the neighbor (the SERVER-121340 _id-vs-rid
+        # signature). No crash, no assertion: the page has rows so
+        # cbt->slot is in bounds.
+        cf.set_key(target_key)
+        self.assertEqual(cf.search(), 0)
+        self.assertEqual(cf.get_key(), target_key)
+        actual = cf.get_value()
+
+        # Owner-tag check: the SERVER-121340 _id-vs-rid signature.
+        # If this assertion fires, the value belongs to a different
+        # key; the diagnostic includes the owner tag we got vs. the
+        # one we expected.
+        owner_tag = f'V_K{target_key:02d}'
+        self.assertTrue(
+            actual.startswith(owner_tag),
+            f'Cross-key contamination on target_key={target_key}: '
+            f'returned value has owner tag {actual[:5]!r}, expected '
+            f'{owner_tag!r}. First 16 bytes returned: {actual[:16]!r}. '
+            f'Expected (first 16): {expected[:16]!r}. Surviving '
+            f'neighbors probed: {neighbors_found}.')
+
+        # Full-value check: catches modify-delta-applied-to-wrong-base
+        # even in the (extremely unlikely) case the neighbor's owner
+        # tag coincidentally matches target_key's.
+        self.assertEqual(actual, expected)
+
+        cf.close()
+        self.session_follow.rollback_transaction()
+
+        self.teardown_follower_and_checkpoint_leader()
