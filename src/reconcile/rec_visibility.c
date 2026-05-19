@@ -1255,8 +1255,26 @@ __rec_upd_select_inmem(WT_SESSION_IMPL *session, WTI_RECONCILE *r, WT_CELL_UNPAC
      * If the goal is to prune the entire key, avoid clearing the selected update.
      */
     if (WT_REC_HAS_ON_DISK(vpack) && !found_last_upd_to_keep && first_pruned_update == NULL) {
-        *has_newer_updatesp |= (upd_select->upd != NULL);
-        upd_select->upd = NULL;
+        /*
+         * If the bottom non-aborted entry in the saved chain is a MODIFY, that MODIFY's
+         * reconstruction base is the existing on-page value. Clearing upd_select->upd here lets
+         * the GARBAGE_COLLECT path in rec_row.c drop the on-page cell from the rebuilt in-memory
+         * disk image. The saved chain then survives via supd_restore but lands on the insert list
+         * of the new page (the key has no row), and readers walking the MODIFY can no longer fall
+         * back to the on-page value -- they trip the "cbt->slot != UINT32_MAX" assertion in
+         * __wt_modify_reconstruct_from_upd_list. Keep the on-page value in this case; a later
+         * reconciliation will reclaim it once the dependent MODIFY is also obsolete.
+         */
+        WT_UPDATE *last_non_aborted = NULL;
+        for (WT_UPDATE *u = first_upd; u != NULL; u = u->next) {
+            if (u->txnid == WT_TXN_ABORTED)
+                continue;
+            last_non_aborted = u;
+        }
+        if (last_non_aborted == NULL || last_non_aborted->type != WT_UPDATE_MODIFY) {
+            *has_newer_updatesp |= (upd_select->upd != NULL);
+            upd_select->upd = NULL;
+        }
     }
 
     /*
