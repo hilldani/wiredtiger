@@ -27,9 +27,9 @@
 # OTHER DEALINGS IN THE SOFTWARE.
 
 # test_layered105.py
-#   Regression test for the assertion at src/support/modify.c:486
-#   ("cbt->slot != UINT32_MAX") seen during test/format with CONFIG.disagg
-#   disagg.multi=1 (core dump_t.4591.core).
+#   Regression tests for WT-17453 (assertion at src/support/modify.c:486
+#   ("cbt->slot != UINT32_MAX") and SIGSEGV in __wt_row_leaf_value seen
+#   during test.format with CONFIG.disagg disagg.multi=1).
 #
 #   Bug shape (before the fix):
 #     An ingest-btree row K has on-disk value V1 and an in-memory chain
@@ -48,16 +48,36 @@
 #     modify->next == NULL with no on-page fallback and aborts the
 #     process at the assertion.
 #
-#   With the bug present this test aborts during step 8 (the
-#   read_timestamp=25 iteration) with:
-#       __wt_modify_reconstruct_from_upd_list, 486: WiredTiger assertion
-#       failed: 'cbt->slot != (4294967295U)'
-#   After the fix it should return V1 with D1 applied.
+#   Two symptoms, one bug:
+#     - test_modify_survives_ingest_gc_of_base_value (cursor.next on a
+#       fresh cursor): __cursor_row_next is entered with newpage=true,
+#       which sets cbt->slot = UINT32_MAX (bt_curnext.c:300). The MODIFY
+#       in the smallest insert list has no base in the chain and no
+#       on-page cell to fall back to, so modify.c:486 trips the
+#       diagnostic assertion "cbt->slot != UINT32_MAX".
+#
+#     - test_modify_reconstruction_via_search_hits_null_pointer
+#       (cursor.search on the same key): __wt_row_search lands on a page
+#       with page->entries == 0, so the binary-search base stays 0 and
+#       row_srch.c:725-730 sets cbt->slot = 0 and steers the search into
+#       the smallest insert list. The exact-match read goes through
+#       __cursor_valid_insert -> __wt_txn_read_upd_list ->
+#       __wt_modify_reconstruct_from_upd_list. The line-486 assertion
+#       now sees cbt->slot == 0, which is != UINT32_MAX, so the
+#       assertion passes. Execution continues to modify.c:488 and
+#       __wt_value_return_buf evaluates &page->pg_row[cbt->slot] as
+#       &(NULL)[0] == NULL on a zero-row page, then __wt_row_leaf_value
+#       dereferences it and SIGSEGVs.
+#
+#   With WT-17453 applied, __rec_upd_select_inmem keeps upd_select->upd
+#   non-NULL when the bottom non-aborted update of the saved chain is a
+#   MODIFY. That preserves the on-page V1 cell in the rebuilt page, so
+#   the orphan-MODIFY state never arises and both read paths return the
+#   reconstructed value cleanly.
 
 import wiredtiger, wttest
 from helper_disagg import disagg_test_class, gen_disagg_storages
 from wtscenario import make_scenarios
-from wiredtiger import stat
 
 @disagg_test_class
 class test_layered105(wttest.WiredTigerTestCase):
@@ -91,40 +111,13 @@ class test_layered105(wttest.WiredTigerTestCase):
         evict_cursor.close()
         session_evict.close()
 
-    def test_modify_survives_ingest_gc_of_base_value(self):
+    def setup_orphan_modify_precondition(self):
         """
-        Timeline:
-          ts=10  insert K = V1 on leader and follower
-          force-evict follower's ingest page  -> K is on its in-memory
-                                                 disk image
-          stable_timestamp = 11               -> locked before the higher
-                                                 writes so the upcoming
-                                                 checkpoint runs at this
-                                                 timestamp
-          ts=20  modify K (D1) on both sides   -> ingest chain:
-                                                 [MODIFY(D1) -> NULL]
-                                                 with base = on-disk V1
-          ts=30  update K = V2  on both sides  -> ingest chain:
-                                                 [STANDARD(V2)
-                                                  -> MODIFY(D1) -> NULL]
-          checkpoint on leader; advance on follower
-                                              -> follower prune_timestamp
-                                                 = 11. D1 (ts=20) and V2
-                                                 (ts=30) are NOT pruneable;
-                                                 on-disk V1 (ts=10) IS
-                                                 GC-eligible.
-          oldest_timestamp = 11 on follower    -> V1 is visible_all; D1
-                                                 and V2 are not.
-          force-evict follower's ingest page   -> reconciliation drops K
-                                                 from the rebuilt in-memory
-                                                 disk image; the saved
-                                                 chain lands on the
-                                                 insert list of the new
-                                                 page.
-          begin_transaction(read_timestamp=25) -> sees D1 but not V2.
-          iterate ingest cursor                -> reconstructs D1 against
-                                                 V1; before the fix this
-                                                 aborts at modify.c:486.
+        Shared timeline through force eviction on the follower's ingest
+        btree. Leaves the follower ready for a read at read_timestamp=25
+        that sees MODIFY(D1) but not STANDARD(V2).
+
+        Returns the value expected when D1 is reconstructed against V1.
         """
         self.create_follower()
 
@@ -224,27 +217,9 @@ class test_layered105(wttest.WiredTigerTestCase):
         # chain depends on it.
         self.force_evict(self.conn_follow, self.uri, 1)
 
-        # Step 8: read at a timestamp that sees the MODIFY but not the
-        # newer STANDARD. Iterate so the cursor walks the insert list (the
-        # same path the production core dump shows). Before the fix this
-        # aborts at modify.c:486 with
-        #     'cbt->slot != (4294967295U)'. After the fix the MODIFY is
-        # reconstructed against V1 and returns the expected value.
-        expected = 'value1' + 'X' + ('.' * 99)
+        return 'value1' + 'X' + ('.' * 99)
 
-        self.session_follow.begin_transaction(
-            f'read_timestamp={self.timestamp_str(25)}')
-        cf = self.session_follow.open_cursor(self.ingest_uri)
-        # cursor.next walks the insert list; this is the call that aborts
-        # the process with the bug present.
-        self.assertEqual(cf.next(), 0)
-        self.assertEqual(cf.get_key(), 1)
-        self.assertEqual(cf.get_value(), expected)
-        # No more entries — the ingest btree only has K=1.
-        self.assertEqual(cf.next(), wiredtiger.WT_NOTFOUND)
-        cf.close()
-        self.session_follow.rollback_transaction()
-
+    def teardown_follower_and_checkpoint_leader(self):
         # Drop the follower before tearDown to avoid a verifyLayered
         # contention on a follower that still has the ingest btree open.
         self.session_follow.close()
@@ -259,3 +234,49 @@ class test_layered105(wttest.WiredTigerTestCase):
         self.conn.set_timestamp(
             f'stable_timestamp={self.timestamp_str(100)}')
         self.session.checkpoint()
+
+    def test_modify_survives_ingest_gc_of_base_value(self):
+        """
+        Read at read_timestamp=25 via cursor.next(). Before the fix this
+        aborts at modify.c:486 with 'cbt->slot != (4294967295U)'. After
+        the fix the MODIFY is reconstructed against V1.
+        """
+        expected = self.setup_orphan_modify_precondition()
+
+        self.session_follow.begin_transaction(
+            f'read_timestamp={self.timestamp_str(25)}')
+        cf = self.session_follow.open_cursor(self.ingest_uri)
+        # cursor.next walks the insert list; this is the call that aborts
+        # the process with the bug present.
+        self.assertEqual(cf.next(), 0)
+        self.assertEqual(cf.get_key(), 1)
+        self.assertEqual(cf.get_value(), expected)
+        # No more entries — the ingest btree only has K=1.
+        self.assertEqual(cf.next(), wiredtiger.WT_NOTFOUND)
+        cf.close()
+        self.session_follow.rollback_transaction()
+
+        self.teardown_follower_and_checkpoint_leader()
+
+    def test_modify_reconstruction_via_search_hits_null_pointer(self):
+        """
+        Same precondition as test_modify_survives_ingest_gc_of_base_value,
+        but exercises cursor.search() instead of next(). row_srch.c sets
+        cbt->slot = 0 on the empty page, which bypasses the modify.c:486
+        assertion; without the fix __wt_value_return_buf dereferences
+        page->pg_row[0] (NULL) and SIGSEGVs.
+        """
+        expected = self.setup_orphan_modify_precondition()
+
+        self.session_follow.begin_transaction(
+            f'read_timestamp={self.timestamp_str(25)}')
+        cf = self.session_follow.open_cursor(self.ingest_uri)
+        cf.set_key(1)
+        # This is the call that crashes without the fix.
+        self.assertEqual(cf.search(), 0)
+        self.assertEqual(cf.get_key(), 1)
+        self.assertEqual(cf.get_value(), expected)
+        cf.close()
+        self.session_follow.rollback_transaction()
+
+        self.teardown_follower_and_checkpoint_leader()
