@@ -136,6 +136,19 @@ __prepared_discover_find_or_create_item(WT_SESSION_IMPL *session, uint64_t prepa
 }
 
 /*
+ * __wti_prepared_discover_add_fast_truncate --
+ *     Add a prepared fast-truncate in the pending prepared map. Called from the prepared discover
+ *     walk when a WT_REF_DELETED page with prepare_state == WT_PREPARE_INPROGRESS is found.
+ */
+int
+__wti_prepared_discover_add_fast_truncate(
+  WT_SESSION_IMPL *session, uint64_t prepared_id, wt_timestamp_t prepare_ts)
+{
+    WT_PENDING_PREPARED_ITEM *item;
+    return (__prepared_discover_find_or_create_item(session, prepared_id, prepare_ts, &item));
+}
+
+/*
  * __wt_prepared_discover_remove_item --
  *     Find and remove a pending prepared item by its ID in the pending prepared items hash map.
  */

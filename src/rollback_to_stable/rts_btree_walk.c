@@ -50,18 +50,27 @@ __rts_btree_walk_page_skip(
     if (WT_REF_GET_STATE(ref) == WT_REF_DELETED &&
       WT_REF_CAS_STATE(session, ref, WT_REF_DELETED, WT_REF_LOCKED)) {
         page_del = ref->page_del;
+
+        /*
+         * Prepared fast-truncates must always be rolled back by RTS: their pg_del_durable_ts is
+         * WT_TS_NONE (0), which would otherwise pass the timestamp check below and incorrectly
+         * cause them to be skipped.
+         */
+        if (page_del != NULL && page_del->prepare_state == WT_PREPARE_INPROGRESS) {
+            __wt_verbose_multi(session, WT_VERB_RECOVERY_RTS(session),
+              WT_RTS_VERB_TAG_PAGE_DELETE
+              "ref=%p: rolling back prepared fast-truncate, txnid=%" PRIu64 ", prepare_ts=%s",
+              (void *)ref, page_del->txnid,
+              __wt_timestamp_to_string(page_del->prepare_ts, time_string[0]));
+            __wt_free(session, ref->page_del);
+            WT_REF_SET_STATE(ref, WT_REF_DISK);
+            *skipp = false; /* let RTS visit the restored page for any other updates */
+            return (0);
+        }
+
         if (page_del == NULL ||
           (__wti_rts_visibility_txn_visible_id(session, page_del->txnid) &&
             page_del->pg_del_durable_ts <= rollback_timestamp)) {
-            /*
-             * We should never see a prepared truncate here; not at recovery time because prepared
-             * truncates can't be written to disk, and not during a runtime RTS either because it
-             * should not be possible to do that with an unresolved prepared transaction.
-             */
-            WT_ASSERT(session,
-              page_del == NULL || page_del->prepare_state == WT_PREPARE_INIT ||
-                page_del->prepare_state == WT_PREPARE_RESOLVED);
-
             if (page_del == NULL)
                 __wt_verbose_multi(session, WT_VERB_RECOVERY_RTS(session),
                   WT_RTS_VERB_TAG_SKIP_DEL_NULL "ref=%p: deleted page walk skipped", (void *)ref);

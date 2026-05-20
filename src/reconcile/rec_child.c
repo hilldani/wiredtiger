@@ -105,6 +105,7 @@ __rec_child_deleted(
         cmsp->del = *page_del;
         cmsp->state = WTI_CHILD_PROXY;
         page_del->selected_for_write = true;
+        r->prepared_fast_truncate = true;
         return (0);
     }
 

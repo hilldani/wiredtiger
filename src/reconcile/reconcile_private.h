@@ -416,6 +416,8 @@ struct __wti_reconcile {
      */
     bool hs_clear_on_tombstone;
     WT_CURSOR *hs_cursor;
+
+    bool prepared_fast_truncate; /* Page contains a prepared fast-truncate proxy cell */
 };
 
 /*
