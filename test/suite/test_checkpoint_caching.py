@@ -112,7 +112,7 @@ class test_checkpoint_caching(wttest.WiredTigerTestCase):
         self.session.checkpoint()
 
         # Follower advances to N+1 and rescans. The new stable dhandle has fresh WT_REFs in
-        # WT_REF_DISK state; reading them finds the same block addresses already in cache → hits.
+        # WT_REF_DISK state; reading them finds the same block addresses already in cache  hits.
         self.disagg_advance_checkpoint(self.conn_follow)
         cursor_ckpt_n1 = self.scan_all(self.session_follow)
         cursor_ckpt_n1.close()
