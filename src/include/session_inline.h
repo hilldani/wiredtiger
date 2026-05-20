@@ -21,12 +21,8 @@
 static WT_INLINE void
 __wt_single_thread_check_start(WT_SESSION_IMPL *s)
 {
-#if !defined(HAVE_DIAGNOSTIC)
-    WT_UNUSED(s);
-    return;
-#else
-    uintmax_t current_tid;
     WT_DECL_RET;
+    uintmax_t current_tid;
 
     __wt_thread_id(&current_tid);
     if (!WT_SESSION_IS_DEFAULT(s) && s->thread_check.owning_thread != current_tid) {
@@ -44,7 +40,6 @@ __wt_single_thread_check_start(WT_SESSION_IMPL *s)
         s->thread_check.owning_thread = current_tid;
     }
     ++s->thread_check.entry_count;
-#endif
 }
 
 /*
@@ -54,13 +49,8 @@ __wt_single_thread_check_start(WT_SESSION_IMPL *s)
 static WT_INLINE void
 __wt_single_thread_check_stop(WT_SESSION_IMPL *s)
 {
-#if !defined(HAVE_DIAGNOSTIC)
-    WT_UNUSED(s);
-    return;
-#else
     if (--s->thread_check.entry_count == 0 && !WT_SESSION_IS_DEFAULT(s)) {
         s->thread_check.owning_thread = 0;
         __wt_spin_unlock(s, &s->thread_check.lock);
     }
-#endif
 }
