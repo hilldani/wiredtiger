@@ -111,7 +111,7 @@ class test_checkpoint_caching(wttest.WiredTigerTestCase):
         # Leader makes checkpoint N+1 without modifying data; block addresses are unchanged.
         self.session.checkpoint()
 
-        # Follower advances to N+1 and rescans. The new stable dhandle has fresh WT_REFs in
+        # Follower advances to N+1 and reads again. The new stable dhandle has fresh WT_REFs in
         # WT_REF_DISK state; reading them finds the same block addresses already in cache  hits.
         self.disagg_advance_checkpoint(self.conn_follow)
         cursor_ckpt_n1 = self.scan_all(self.session_follow)
@@ -131,7 +131,7 @@ class test_checkpoint_caching(wttest.WiredTigerTestCase):
             self.get_stat(wiredtiger.stat.conn.cache_shared_dsk_miss, self.session_follow), 0)
         cursor.close()
 
-        # Reopen the follower to get a guaranteed-empty cache, then rescan.
+        # Reopen the follower to get a guaranteed-empty cache, then read again.
         # If release() leaked any entries, the second scan would produce hits instead of misses.
         self.session_follow.close()
         self.conn_follow.close()
